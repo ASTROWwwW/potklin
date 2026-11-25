@@ -2,7 +2,7 @@
 
 A local-first general-purpose AI agent research project, targeting consumer hardware. Potklin aims to complete real tasks quickly, autonomously and with verifiable evidence rather than merely generate answers.
 
-**Status:** research and design; no working agent or GPT-5 parity claimed.
+**Status:** early executable prototype; no general autonomous agent or GPT-5 parity claimed.
 
 ## Design principles
 
@@ -29,3 +29,7 @@ License: not yet selected. Do not assume permission to redistribute third-party 
 ## Research update (2026-11-25)
 
 Local benchmark campaign completed through V3; provisional 35B-A3B main candidate and 9B fast candidate. See [benchmark findings](docs/benchmarks-2026-11-25.md), [current execution roadmap](docs/roadmap-current.md) and [hardware lab](docs/hardware-lab.md). No working agent yet.
+
+## Prototype
+
+See [prototype scope and V4/V5 findings](docs/prototype.md). Python 3.12, standard library only. Run `python -m unittest discover -s tests -v` and `python -m potklin tools` from the checkout. Mods are authored by developers, never generated or installed by the model.
