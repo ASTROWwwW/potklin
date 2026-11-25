@@ -3,6 +3,8 @@ from urllib.parse import urlsplit
 from dataclasses import dataclass
 
 def origin(url):
+    if not isinstance(url,str) or "\\" in url or any(ord(x)<32 or ord(x)==127 for x in url):
+        raise ValueError("invalid URL")
     u=urlsplit(url)
     if u.scheme not in {"http","https"} or not u.hostname or u.username or u.password:
         raise ValueError("HTTP(S) URL without credentials required")
