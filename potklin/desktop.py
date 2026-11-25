@@ -23,3 +23,23 @@ def tree(app):
         if len(result)>=5:
             break
     return {"app":app,"windows":result}
+
+def capture(app,output,confirmed=False):
+    """Explicit local capture of a selected visible window; may include overlapping UI."""
+    if not confirmed:
+        raise PermissionError("explicit screenshot confirmation required")
+    from pathlib import Path
+    from pywinauto import Desktop
+    pids=status(app)["pids"]
+    windows=[w for w in Desktop(backend="uia").windows() if w.element_info.process_id in pids and w.is_visible()]
+    if len(windows)!=1:
+        raise ValueError("exactly one matching visible window required")
+    path=Path(output)
+    if path.suffix.lower()!=".png":
+        raise ValueError("PNG path required")
+    im=windows[0].capture_as_image()
+    if im is None or im.width*im.height>16000000:
+        raise ValueError("invalid capture")
+    with path.open("xb") as handle:
+        im.save(handle,format="PNG")
+    return {"path":str(path),"width":im.width,"height":im.height,"local_only":True}

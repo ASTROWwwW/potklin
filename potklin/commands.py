@@ -32,10 +32,11 @@ def main():
     pr.add_argument("--confirm",action="store_true")
     u=sub.add_parser("uia")
     u.add_argument("app",choices=["discord","notepad"])
-    u.add_argument("--action",choices=["observe","invoke","set_text","click","press"],default="observe")
+    u.add_argument("--action",choices=["observe","invoke","set_text","click","press","capture"],default="observe")
     u.add_argument("--id",default="")
     u.add_argument("--kind",default="Button")
     u.add_argument("--text",default="")
+    u.add_argument("--output",default="")
     u.add_argument("--confirm",action="store_true")
     a=p.parse_args()
     if a.command=="browse":
@@ -69,6 +70,9 @@ def main():
         if a.action=="observe":
             from .desktop import tree
             result=tree(a.app)
+        elif a.action=="capture":
+            from .desktop import capture
+            result=capture(a.app,a.output,a.confirm)
         else:
             from .desktop_actions import control
             result=control(a.app,a.id,a.kind,a.action,a.text,a.confirm)

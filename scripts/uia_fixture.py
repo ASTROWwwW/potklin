@@ -69,7 +69,10 @@ def main():
                     passed=True
                     break
                 time.sleep(.1)
-            print(json.dumps({"suite":"uia_fixture","passed":passed,"method":"mouse and keyboard fixture" if args.physical_input else "UIA set text and invoke"}))
+            image=win.capture_as_image()
+            image_ok=image is not None and image.width>100 and image.height>100
+            passed=passed and image_ok
+            print(json.dumps({"suite":"uia_fixture","passed":passed,"fixture_screenshot_verified":image_ok,"method":"mouse and keyboard fixture" if args.physical_input else "UIA set text and invoke"}))
             return int(not passed)
         finally:
             if process.poll() is None:

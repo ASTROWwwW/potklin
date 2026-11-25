@@ -20,7 +20,7 @@ jobs:
       - run: python -m scripts.security_eval --repeats 2
       - run: python -m potklin.commands --help
   browser:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
