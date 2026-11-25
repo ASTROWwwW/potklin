@@ -32,7 +32,7 @@ def main():
     pr.add_argument("--confirm",action="store_true")
     u=sub.add_parser("uia")
     u.add_argument("app",choices=["discord","notepad"])
-    u.add_argument("--action",choices=["observe","invoke","set_text"],default="observe")
+    u.add_argument("--action",choices=["observe","invoke","set_text","click","press"],default="observe")
     u.add_argument("--id",default="")
     u.add_argument("--kind",default="Button")
     u.add_argument("--text",default="")

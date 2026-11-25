@@ -1,6 +1,7 @@
 """Real UIA click and text verification on a disposable Windows Forms fixture.
 Uses UI Automation rather than global keyboard hooks or arbitrary desktop actions.
 """
+import argparse
 import json
 import os
 import subprocess
@@ -37,6 +38,9 @@ $f.Controls.AddRange(@($t,$b,$l))
 [void]$f.ShowDialog()
 """
 def main():
+    parser=argparse.ArgumentParser()
+    parser.add_argument("--physical-input",action="store_true")
+    args=parser.parse_args()
     if sys.platform!="win32":
         raise OSError("Windows only")
     from pywinauto import Application
@@ -50,8 +54,14 @@ def main():
             win=app.window(title="Potklin UIA fixture")
             win.wait("visible ready",timeout=20)
             edit=win.child_window(control_type="Edit")
-            edit.set_edit_text("4821")
-            win.child_window(title="Verify",control_type="Button").invoke()
+            if args.physical_input:
+                win.set_focus()
+                edit.click_input()
+                edit.type_keys("4821",set_foreground=False)
+                win.child_window(title="Verify",control_type="Button").click_input()
+            else:
+                edit.set_edit_text("4821")
+                win.child_window(title="Verify",control_type="Button").invoke()
             deadline=time.monotonic()+5
             passed=False
             while time.monotonic()<deadline:
@@ -59,7 +69,7 @@ def main():
                     passed=True
                     break
                 time.sleep(.1)
-            print(json.dumps({"suite":"uia_fixture","passed":passed,"method":"UIA set text and invoke"}))
+            print(json.dumps({"suite":"uia_fixture","passed":passed,"method":"mouse and keyboard fixture" if args.physical_input else "UIA set text and invoke"}))
             return int(not passed)
         finally:
             if process.poll() is None:
