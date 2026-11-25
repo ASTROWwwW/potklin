@@ -11,7 +11,7 @@ class Ollama:
         self.model, self.context, self.threads, self.timeout = model, context, threads, timeout
 
     def request(self, path, data=None):
-        if path not in {"/api/tags", "/api/chat", "/api/ps"}:
+        if path not in {"/api/tags", "/api/chat", "/api/ps", "/api/embed"}:
             raise ValueError("unsupported endpoint")
         req = urllib.request.Request("http://127.0.0.1:11434" + path,
             data=None if data is None else json.dumps(data).encode(),
@@ -29,6 +29,9 @@ class Ollama:
         if structured:
             body["format"] = "json"
         return self.request("/api/chat", body)
+
+    def embed(self, text, model):
+        return self.request("/api/embed",{"model":model,"input":text,"keep_alive":"5m"})["embeddings"][0]
 
     def propose(self, request, tools):
         specs = [{"name": t.name, "description": t.description, "arguments": t.arguments}

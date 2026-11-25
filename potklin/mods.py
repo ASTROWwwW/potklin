@@ -11,6 +11,8 @@ from .manifests import validate
 from .codeinspect import symbols
 from .documents import inspect as inspect_html
 from .search import search
+from .dependencies import inventory
+from .edits import replace,digest
 
 class Workspace:
     def __init__(self, root):
@@ -117,5 +119,7 @@ def build_registry(root):
     r.register(Tool("coding.symbols","coding","Inspect Python syntax and symbols",("path",),lambda path:symbols(w,path),lambda v,path:v==symbols(w,path)))
     r.register(Tool("files.search","filesystem","Find literal text in local files",("path","query"),lambda path,query:search(w,path,query),lambda v,path,query:v==search(w,path,query)))
     r.register(Tool("documents.html","documents","Read local HTML visible text and links without executing scripts",("path",),lambda path:inspect_html(w,path),lambda v,path:v==inspect_html(w,path)))
+    r.register(Tool("coding.dependencies","coding","Inventory local dependency manifest",("path",),lambda path:inventory(w,path),lambda v,path:v==inventory(w,path)))
+    r.register(Tool("files.replace","filesystem","Explicit compare-and-swap text edit",("path","expected_sha256","old","new"),lambda path,expected_sha256,old,new:replace(w,path,expected_sha256,old,new),lambda v,path,**kw:digest(w.path(path).read_bytes())==v["sha256"],True))
     validate(r)
     return r

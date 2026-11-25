@@ -17,6 +17,7 @@ def main():
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("tools")
     sub.add_parser("mods")
+    sub.add_parser("gui")
     mission=sub.add_parser("mission")
     mission.add_argument("request")
     mission.add_argument("--mods",nargs="+",choices=["filesystem","cyber","windows","coding","documents"],required=True)
@@ -33,6 +34,10 @@ def main():
     plan.add_argument("request")
     plan.add_argument("--mods", nargs="+", choices=["filesystem", "cyber", "coding", "documents"], required=True)
     a = p.parse_args()
+    if a.command == "gui":
+        from .ui import launch
+        launch(a.workspace,a.model,a.journal)
+        return
     r = build_registry(a.workspace)
     if a.command == "mods":
         print(json.dumps([asdict(m) for m in MANIFESTS],indent=2))
