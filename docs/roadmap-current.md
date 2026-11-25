@@ -35,3 +35,7 @@ Acceptance: improvements must reduce time to verified completion or increase suc
 ## V6 prototype increment
 
 Implemented initial developer-authored registry, deterministic launch routing, explicit side-effect permission, bounded fixture file reads/listing, read-only Python pattern review, local Ollama proposal adapter, SQLite journal, Windows/Linux CI definition and local integration probes. Not yet a general autonomous agent. No externally connected red-team execution, no self-authored mods. Next: verified UI observation, robust OS sandbox, multi-step mission state and developer-maintained security analysis tools. V6 tests still require a successful execution report; CI configuration alone is not proof of passing tests.
+
+## Combined increment
+
+Initial parallel DAG, lexical notes, coding inspection and scheduler policy implemented. See [scope and pending work](combined-release.md). All remain subject to tests; no hardware acceleration or complete desktop/red-team agent claimed.

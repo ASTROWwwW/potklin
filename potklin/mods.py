@@ -8,6 +8,7 @@ from .core import Tool, Registry
 from .windows import status, wait_visible
 from .review import review
 from .manifests import validate
+from .codeinspect import symbols
 
 class Workspace:
     def __init__(self, root):
@@ -111,5 +112,6 @@ def build_registry(root):
                     lambda v, app: False, True))
     r.register(Tool("windows.status","windows","Observe visible allowlisted application",("app",),status,lambda v,app: v["visible"] and status(app)["visible"]))
     r.register(Tool("cyber.ast_review","cyber","Review local Python AST for security leads",("path",),lambda path:review(w,path),lambda v,path:v==review(w,path)))
+    r.register(Tool("coding.symbols","coding","Inspect Python syntax and symbols",("path",),lambda path:symbols(w,path),lambda v,path:v==symbols(w,path)))
     validate(r)
     return r

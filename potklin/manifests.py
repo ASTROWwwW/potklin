@@ -10,6 +10,7 @@ class Manifest:
 MANIFESTS = (
     Manifest("filesystem","1.1",("files.read","files.list")),
     Manifest("cyber","1.1",("cyber.audit","cyber.ast_review")),
+    Manifest("coding","1.0",("coding.symbols",)),
     Manifest("windows","1.1",("windows.launch","windows.status")),
 )
 

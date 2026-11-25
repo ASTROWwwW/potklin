@@ -33,3 +33,7 @@ Local benchmark campaign completed through V3; provisional 35B-A3B main candidat
 ## Prototype
 
 See [prototype scope and V4/V5 findings](docs/prototype.md). Python 3.12, standard library only. Run `python -m unittest discover -s tests -v` and `python -m potklin tools` from the checkout. Mods are authored by developers, never generated or installed by the model.
+
+## Combined increment (0.3.0)
+
+See [current implementation and limitations](docs/combined-release.md). Run `python -m scripts.expanded_probe` for offline DAG regressions. This is not a stable V1.0 release.
