@@ -9,7 +9,7 @@ from potklin.ollama import Ollama
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        pages={"/":"<h1>Home</h1><a href='/index'>Catalog</a>","/index":"<h1>Catalog</h1><a href='/report'>Final report</a>","/report":"<h1>Final report</h1><p>Reference PK830194</p>"}
+        pages={"/":"<h1>Home</h1><a href='/index'>Catalog</a>","/index":"<h1>Catalog</h1><a href='/report'>Final report</a>","/report":"<h1>Final report</h1><p>Reference PK830194</p><input id='fixtureInput'>"}
         if self.path not in pages:
             self.send_error(404)
             return
@@ -39,7 +39,9 @@ def main():
                 session.navigate(base+"/")
                 session.click_link(0)
                 result=session.click_link(0)
-                passed="PK830194" in result["text"]
+                filled=session.fill_field("fixtureInput","fixture-4821",True)
+                passed="PK830194" in result["text"] and filled["verified"]
+                result["field_verified"]=filled["verified"]
             print(json.dumps({"suite":"browser_agent","model":bool(a.model),"passed":passed,"result":result}))
             return int(not passed)
     finally:
