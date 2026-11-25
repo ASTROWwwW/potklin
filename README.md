@@ -25,3 +25,7 @@ A local-first general-purpose AI agent research project, targeting consumer hard
 Reference target: RTX 5080 16 GiB, 64 GiB RAM, Core Ultra 9 285K. Hardware-specific targets are experimental, not requirements for future users.
 
 License: not yet selected. Do not assume permission to redistribute third-party model weights or source code.
+
+## Research update (2026-11-25)
+
+Local benchmark campaign completed through V3; provisional 35B-A3B main candidate and 9B fast candidate. See [benchmark findings](docs/benchmarks-2026-11-25.md), [current execution roadmap](docs/roadmap-current.md) and [hardware lab](docs/hardware-lab.md). No working agent yet.

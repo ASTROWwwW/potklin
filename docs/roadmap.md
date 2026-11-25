@@ -13,3 +13,7 @@ All milestones are planned, not implemented.
 - [ ] M8 — Comparative evaluation against GPT-5. Gate: publish reproducible methods and limitations, including failed tasks.
 
 First implementation: a single model backend, deterministic tool registry, mission state, evidence store and benchmark runner. Avoid building several engines or training pipelines before the first useful vertical slice.
+
+## Current execution priorities
+
+See [revised execution roadmap](roadmap-current.md) for completed research, outstanding verification and next actions. M0 is partially complete; implementation milestones remain open.

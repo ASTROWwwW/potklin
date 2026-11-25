@@ -22,3 +22,7 @@ Qwen3 14B Q4_K_M, Flash Attention, q8_0: short prompt ~80–82 tokens/s; ~13k pr
 Evaluate coding, terminal, browser, documents, data and GUI tasks. Build a private held-out suite with exact oracles where possible; use human rubrics for open-ended work. Compare public benchmarks only after verifying versions and contamination risks. Compare GPT-5 under equivalent tools, permissions and budgets; separately report native-product comparisons. Never claim general equivalence from isolated tasks.
 
 Ablations: model original/abliterated, quantization, KV, context cache, MTP, planner, skills, memory, verifier, rollouts and OS. Keep changes only when benefits outweigh quality and complexity costs.
+
+## Extended campaign
+
+See [benchmark campaign](benchmarks-2026-11-25.md). Separate semantic correctness, format compliance, truncation, tool validity and end-to-end success. Report incomplete denominators and cold/warm conditions. Identical repeated requests are best-case cache tests, not conversation performance. Raw private data not published; aggregate transcription needs CSV audit.

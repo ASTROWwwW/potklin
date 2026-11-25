@@ -18,3 +18,7 @@ Priorities: stable prefix caching, Flash Attention, KV precision sweep, mixed we
 ## Training
 
 First collect verified trajectories with failure labels and immutable train/holdout splits. Test conditional adapters on feasible small models before attempting 27B training. Estimate peak memory empirically. Compare SFT, preference tuning and reward-based training only where verifiers are meaningful. Pruning and expert surgery are later experiments with non-regression gates. No full fine-tuning promise on 16 GiB.
+
+## Provisional local selection (2026-11-25)
+
+See [campaign results](benchmarks-2026-11-25.md). Local 35B-A3B tag is the main candidate, 9B the fast candidate, 27B the deep comparison. Auto GPU placement + 8 CPU threads won the tested 35B sweep. Test alternative engines, actual expert placement and switching before changing defaults. Local tag identity is not independently verified. No MTP or Intel accelerator gains measured yet.

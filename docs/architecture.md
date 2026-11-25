@@ -36,3 +36,7 @@ Skills use SKILL.md metadata, references and scripts. Retrieve domain then top-k
 ## Proposed implementation
 
 Python typed orchestration and SQLite for the first prototype; native runtime behind an adapter. Interfaces: ModelBackend.generate, Tool.execute, Verifier.verify, Memory.retrieve, Planner.replan, SkillRegistry.select. Use an explicit state machine and durable checkpoint transactions. No engine fork before profiling.
+
+## Provisional routing experiment
+
+35B-A3B for normal missions, 9B for fast work, 27B as a deep-mode comparison; Instant remains deterministic where possible. Thinking is conditional on measured difficulty, not mandatory. Use structured tool outputs and independent checks. Do not assume simultaneous residency or Intel acceleration. See [hardware lab](hardware-lab.md) and [campaign results](benchmarks-2026-11-25.md).
