@@ -9,6 +9,8 @@ from .windows import status, wait_visible
 from .review import review
 from .manifests import validate
 from .codeinspect import symbols
+from .documents import inspect as inspect_html
+from .search import search
 
 class Workspace:
     def __init__(self, root):
@@ -113,5 +115,7 @@ def build_registry(root):
     r.register(Tool("windows.status","windows","Observe visible allowlisted application",("app",),status,lambda v,app: v["visible"] and status(app)["visible"]))
     r.register(Tool("cyber.ast_review","cyber","Review local Python AST for security leads",("path",),lambda path:review(w,path),lambda v,path:v==review(w,path)))
     r.register(Tool("coding.symbols","coding","Inspect Python syntax and symbols",("path",),lambda path:symbols(w,path),lambda v,path:v==symbols(w,path)))
+    r.register(Tool("files.search","filesystem","Find literal text in local files",("path","query"),lambda path,query:search(w,path,query),lambda v,path,query:v==search(w,path,query)))
+    r.register(Tool("documents.html","documents","Read local HTML visible text and links without executing scripts",("path",),lambda path:inspect_html(w,path),lambda v,path:v==inspect_html(w,path)))
     validate(r)
     return r
