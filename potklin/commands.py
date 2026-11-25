@@ -14,6 +14,13 @@ def main():
     d.add_argument("request")
     d.add_argument("--depth",type=int,default=2)
     d.add_argument("--nodes",type=int,default=12)
+    mem=sub.add_parser("memory")
+    mem.add_argument("database")
+    mem.add_argument("action",choices=["add","search","delete"])
+    mem.add_argument("value")
+    mem.add_argument("--source",default="user")
+    mem.add_argument("--embedding-model",default="")
+    mem.add_argument("--confirm",action="store_true")
     s=sub.add_parser("sandbox")
     s.add_argument("fixture")
     s.add_argument("output")
@@ -49,6 +56,34 @@ def main():
         from .decompose import decompose
         from .ollama import Ollama
         result=decompose(Ollama(a.model),a.request,a.depth,a.nodes)
+    elif a.command=="memory":
+        if a.action!="search" and not a.confirm:
+            raise PermissionError("explicit note mutation confirmation required")
+        if a.embedding_model:
+            from .semantic import SemanticMemory
+            from .ollama import Ollama
+            import hashlib
+            m=SemanticMemory(a.database,lambda text:Ollama(a.model).embed(text,a.embedding_model),a.embedding_model)
+            try:
+                if a.action=="search":result=m.search(a.value)
+                elif a.action=="add":
+                    key=hashlib.sha256((a.source+"\x00"+a.value).encode()).hexdigest()
+                    m.add(key,a.source,a.value)
+                    result={"id":key}
+                else:
+                    m.delete(a.value)
+                    result={"deleted":a.value}
+            finally:m.close()
+        else:
+            from .memory import Memory
+            m=Memory(a.database)
+            try:
+                if a.action=="search":result=m.search(a.value)
+                elif a.action=="add":result={"id":m.add(a.source,a.value)}
+                else:
+                    m.delete(a.value)
+                    result={"deleted":a.value}
+            finally:m.close()
     elif a.command=="sandbox":
         from .sandbox import config
         with open(a.output,"x",encoding="utf-8") as f:

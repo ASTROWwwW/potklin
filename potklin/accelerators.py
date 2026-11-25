@@ -53,3 +53,7 @@ class Engine:
         if not eligible:
             raise RuntimeError("no verified device")
         return min(eligible,key=lambda x:x.median_ms).device,rows
+
+    def dispatch(self,inputs,devices=None,repeats=20):
+        device,measurements=self.select(inputs,devices,repeats)
+        return {"device":device,"outputs":self.infer(device,inputs),"measurements":measurements}

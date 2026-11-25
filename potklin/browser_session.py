@@ -71,3 +71,16 @@ class BrowserSession:
         if not isinstance(index,int) or not 0<=index<len(data["links"]):
             raise ValueError("invalid link index")
         return self.navigate(data["links"][index]["url"])
+
+    def fill_field(self,element_id,value,confirmed=False):
+        """Explicit filling only, not submission or credential collection."""
+        if not confirmed:raise PermissionError("explicit confirmation required")
+        if not element_id or len(element_id)>80 or not element_id.replace("-","").replace("_","").isalnum() or len(value)>2000:
+            raise ValueError("invalid field")
+        if not self.scope.allows(self.page.url):raise PermissionError("outside scope")
+        el=self.page.locator("#"+element_id)
+        if el.count()!=1:raise ValueError("field not unique")
+        if (el.get_attribute("type") or "").lower() in {"password","hidden","file"}:
+            raise PermissionError("restricted field")
+        el.fill(value)
+        return {"filled":element_id,"verified":el.input_value()==value}

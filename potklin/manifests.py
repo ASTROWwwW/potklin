@@ -8,7 +8,7 @@ class Manifest:
     tools: tuple[str, ...]
 
 MANIFESTS = (
-    Manifest("filesystem","1.1",("files.read","files.list","files.search","files.replace")),
+    Manifest("filesystem","1.1",("files.read","files.list","files.search","files.replace","files.create","files.move","files.remove")),
     Manifest("cyber","1.1",("cyber.audit","cyber.ast_review")),
     Manifest("documents","1.0",("documents.html",)),
     Manifest("coding","1.0",("coding.symbols","coding.dependencies")),

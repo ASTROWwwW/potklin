@@ -13,6 +13,7 @@ from .documents import inspect as inspect_html
 from .search import search
 from .dependencies import inventory
 from .edits import replace,digest
+from .file_actions import create,move,remove
 
 class Workspace:
     def __init__(self, root):
@@ -121,5 +122,8 @@ def build_registry(root):
     r.register(Tool("documents.html","documents","Read local HTML visible text and links without executing scripts",("path",),lambda path:inspect_html(w,path),lambda v,path:v==inspect_html(w,path)))
     r.register(Tool("coding.dependencies","coding","Inventory local dependency manifest",("path",),lambda path:inventory(w,path),lambda v,path:v==inventory(w,path)))
     r.register(Tool("files.replace","filesystem","Explicit compare-and-swap text edit",("path","expected_sha256","old","new"),lambda path,expected_sha256,old,new:replace(w,path,expected_sha256,old,new),lambda v,path,**kw:digest(w.path(path).read_bytes())==v["sha256"],True))
+    r.register(Tool("files.create","filesystem","Explicit exclusive UTF-8 creation",("path","text"),lambda path,text:create(w,path,text),lambda v,path,text:digest(w.path(path).read_bytes())==v["sha256"],True))
+    r.register(Tool("files.move","filesystem","Explicit verified move without overwrite",("source","destination","expected_sha256"),lambda source,destination,expected_sha256:move(w,source,destination,expected_sha256),lambda v,source,destination,**kw:not w.path(source).exists() and digest(w.path(destination).read_bytes())==v["sha256"],True))
+    r.register(Tool("files.remove","filesystem","Explicit removal of matching revision",("path","expected_sha256"),lambda path,expected_sha256:remove(w,path,expected_sha256),lambda v,path,**kw:not w.path(path).exists(),True))
     validate(r)
     return r
