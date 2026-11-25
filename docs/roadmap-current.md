@@ -31,3 +31,7 @@ Companion to the original milestone roadmap. Research completed is not product i
 - [ ] Matched-tool/budget comparison against GPT-5; publish failures and limitations.
 
 Acceptance: improvements must reduce time to verified completion or increase success at matched budgets without unacceptable regressions. Retain reversible baselines. No working agent or parity claim yet.
+
+## V6 prototype increment
+
+Implemented initial developer-authored registry, deterministic launch routing, explicit side-effect permission, bounded fixture file reads/listing, read-only Python pattern review, local Ollama proposal adapter, SQLite journal, Windows/Linux CI definition and local integration probes. Not yet a general autonomous agent. No externally connected red-team execution, no self-authored mods. Next: verified UI observation, robust OS sandbox, multi-step mission state and developer-maintained security analysis tools. V6 tests still require a successful execution report; CI configuration alone is not proof of passing tests.

@@ -10,7 +10,7 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--workspace", default=".")
     p.add_argument("--journal", default="potklin-events.sqlite3")
-    p.add_argument("--model", default="huihui_ai/qwen3.6-abliterated:35b")
+    p.add_argument("--model", default="huihui_ai/Qwen3.6-abliterated:35b-a3b")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("tools")
     direct = sub.add_parser("run")

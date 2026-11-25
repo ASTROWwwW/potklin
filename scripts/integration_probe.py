@@ -24,6 +24,7 @@ def main():
             ex=Executor(registry,j)
             client=Ollama(args.model)
             cases=[("Read notes.txt","files.read",{"path":"notes.txt"},{"filesystem"}),("List directory .","files.list",{"path":"."},{"filesystem"}),("Review Python source in directory . for risky patterns","cyber.audit",{"path":"."},{"cyber"})]
+            total = passed = 0
             for i in range(args.repeats):
                 for request,name,expected,mods in cases:
                     t=time.perf_counter()
@@ -42,12 +43,16 @@ def main():
                     except Exception as e:
                         row.update(error=type(e).__name__,verified=False)
                     row["seconds"]=time.perf_counter()-t
+                    total += 1
+                    passed += int(row['verified'])
                     print(json.dumps(row),flush=True)
             start=time.perf_counter_ns()
             for _ in range(10000):
                 assert route("Lance Discord")["args"]["app"]=="discord"
             print(json.dumps({"benchmark":"native_route","iterations":10000,"mean_us":(time.perf_counter_ns()-start)/10000/1000}),flush=True)
+            print(json.dumps({'summary':'fixture_tasks','passed':passed,'total':total}),flush=True)
+            return 0 if passed == total else 1
         finally:
             j.close()
 if __name__=="__main__":
-    main()
+    raise SystemExit(main())
