@@ -5,6 +5,9 @@ from .core import Executor, Journal
 from .mods import build_registry
 from .ollama import Ollama
 from .router import route
+from .mission import MissionRunner
+from .manifests import MANIFESTS
+from dataclasses import asdict
 
 def main():
     p = argparse.ArgumentParser()
@@ -13,6 +16,12 @@ def main():
     p.add_argument("--model", default="huihui_ai/Qwen3.6-abliterated:35b-a3b")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("tools")
+    sub.add_parser("mods")
+    mission=sub.add_parser("mission")
+    mission.add_argument("request")
+    mission.add_argument("--mods",nargs="+",choices=["filesystem","cyber","windows"],required=True)
+    mission.add_argument("--steps",type=int,default=6)
+    mission.add_argument("--think",action="store_true")
     direct = sub.add_parser("run")
     direct.add_argument("tool")
     direct.add_argument("args")
@@ -25,6 +34,9 @@ def main():
     plan.add_argument("--mods", nargs="+", choices=["filesystem", "cyber"], required=True)
     a = p.parse_args()
     r = build_registry(a.workspace)
+    if a.command == "mods":
+        print(json.dumps([asdict(m) for m in MANIFESTS],indent=2))
+        return
     if a.command == "tools":
         print(json.dumps(list(r.select({"filesystem", "cyber", "windows"})), indent=2))
         return
@@ -34,7 +46,9 @@ def main():
         return
     j = Journal(a.journal)
     try:
-        if a.command == "instant":
+        if a.command == "mission":
+            result=MissionRunner(r,j,Ollama(a.model)).run(a.request,set(a.mods),a.steps,a.think)
+        elif a.command == "instant":
             action = route(a.request)
             if action is None:
                 raise ValueError("no deterministic route; use plan or explicit run")

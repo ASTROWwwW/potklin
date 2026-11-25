@@ -5,6 +5,9 @@ import re
 import subprocess
 import sys
 from .core import Tool, Registry
+from .windows import status, wait_visible
+from .review import review
+from .manifests import validate
 
 class Workspace:
     def __init__(self, root):
@@ -106,4 +109,7 @@ def build_registry(root):
     # Launch request does not establish that the target UI is visible.
     r.register(Tool("windows.launch", "windows", "Launch allowlisted application", ("app",), windows_launch,
                     lambda v, app: False, True))
+    r.register(Tool("windows.status","windows","Observe visible allowlisted application",("app",),status,lambda v,app: v["visible"] and status(app)["visible"]))
+    r.register(Tool("cyber.ast_review","cyber","Review local Python AST for security leads",("path",),lambda path:review(w,path),lambda v,path:v==review(w,path)))
+    validate(r)
     return r
