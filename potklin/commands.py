@@ -23,6 +23,13 @@ def main():
     g.add_argument("--name",default="")
     g.add_argument("--path",action="append",default=[])
     g.add_argument("--confirm",action="store_true")
+    pr=sub.add_parser("pr")
+    pr.add_argument("repository")
+    pr.add_argument("head")
+    pr.add_argument("base")
+    pr.add_argument("title")
+    pr.add_argument("--body",default="")
+    pr.add_argument("--confirm",action="store_true")
     u=sub.add_parser("uia")
     u.add_argument("app",choices=["discord","notepad"])
     u.add_argument("--action",choices=["observe","invoke","set_text"],default="observe")
@@ -55,6 +62,9 @@ def main():
             result=git.branch(a.name,a.confirm)
         else:
             result=git.commit(a.path,a.name,a.confirm)
+    elif a.command=="pr":
+        from .github_actions import create_pr
+        result=create_pr(a.repository,a.head,a.base,a.title,a.body,a.confirm)
     elif a.command=="uia":
         if a.action=="observe":
             from .desktop import tree

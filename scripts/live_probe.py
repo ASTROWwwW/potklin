@@ -21,5 +21,5 @@ for think in (False, True):
             rows.append({"think":think,"run":i,"error":str(e)})
         print(json.dumps(rows[-1]), flush=True)
 print(json.dumps({"summary":"inference","exact":sum(bool(r.get("exact")) for r in rows),"total":len(rows)}),flush=True)
-if any("error" in r for r in rows):
+if any(not r.get("exact") for r in rows):
     sys.exit(1)

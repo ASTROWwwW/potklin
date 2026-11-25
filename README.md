@@ -37,3 +37,7 @@ See [prototype scope and V4/V5 findings](docs/prototype.md). Python 3.12, standa
 ## Combined increment (0.3.0)
 
 See [current implementation and limitations](docs/combined-release.md). Run `python -m scripts.expanded_probe` for offline DAG regressions. This is not a stable V1.0 release.
+
+## Prototype 0.5 — consolidated evaluation
+
+See [scope and validation](docs/roadmap-v05.md). Developer-authored modules only. `python -m potklin.commands --help` exposes explicit advanced commands. Side effects require user confirmation. The local campaign includes exact-oracle reasoning, constrained code repair, long-context retrieval, browser fixtures, OpenVINO and optional LoRA smoke. Do not confuse synthetic fixture accuracy with general intelligence or hardware validation.

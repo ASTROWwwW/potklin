@@ -18,6 +18,7 @@ def main():
     configs=[(c,t) for c in a.contexts for t in a.threads]
     random.Random(42).shuffle(configs)
     prompt="Write a technical explanation of why regression tests matter. Use at least 300 words, no code."
+    failed=0
     for c,t in configs:
         rows=[]
         client=Ollama(a.model,context=c,threads=t)
@@ -33,7 +34,8 @@ def main():
             print(json.dumps(row),flush=True)
             if i and row["valid"]:
                 rows.append(row["tps"])
+        failed+=int(len(rows)!=a.repeats)
         print(json.dumps({"summary":"inference_matrix","ctx":c,"threads":t,"valid_repeats":len(rows),"median_tps":median(rows) if rows else None}),flush=True)
-    return 0
+    return int(bool(failed))
 if __name__=="__main__":
     raise SystemExit(main())

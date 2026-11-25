@@ -19,7 +19,8 @@ def main():
                 marker="PK"+str(rng.randrange(100000000,999999999))
                 target="case-"+str(rng.randrange(100000,999999))
                 # Character-based budget, report actual token count from Ollama.
-                lines=[f"record case-{rng.randrange(100000,999999)} status normal value PK{rng.randrange(100000000,999999999)}" for _ in range(max(20,ctx//25))]
+                ids=rng.sample([x for x in range(100000,105000) if "case-"+str(x)!=target],max(20,ctx//25))
+                lines=[f"record case-{v} status normal value PK{rng.randrange(100000000,999999999)}" for v in ids]
                 lines.insert(int(len(lines)*position),f"record {target} status confirmed value {marker}")
                 prompt="Find the value for exact record "+target+". Return only its value.\n"+"\n".join(lines)
                 t=time.perf_counter()
