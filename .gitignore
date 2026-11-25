@@ -12,3 +12,9 @@ logs/
 artifacts/
 checkpoints/
 benchmarks/raw/
+
+*.sqlite3
+*.sqlite3-*
+.potklin/
+.venv/
+__pycache__/

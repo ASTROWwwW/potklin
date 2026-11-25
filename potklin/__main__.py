@@ -4,6 +4,7 @@ from pathlib import Path
 from .core import Executor, Journal
 from .mods import build_registry
 from .ollama import Ollama
+from .router import route
 
 def main():
     p = argparse.ArgumentParser()
@@ -16,6 +17,9 @@ def main():
     direct.add_argument("tool")
     direct.add_argument("args")
     direct.add_argument("--allow-write", action="store_true")
+    instant = sub.add_parser("instant")
+    instant.add_argument("request")
+    instant.add_argument("--allow-write", action="store_true")
     plan = sub.add_parser("plan")
     plan.add_argument("request")
     plan.add_argument("--mods", nargs="+", choices=["filesystem", "cyber"], required=True)
@@ -30,7 +34,13 @@ def main():
         return
     j = Journal(a.journal)
     try:
-        result = Executor(r, j).run(a.tool, json.loads(a.args), {"filesystem","cyber","windows"}, a.allow_write)
+        if a.command == "instant":
+            action = route(a.request)
+            if action is None:
+                raise ValueError("no deterministic route; use plan or explicit run")
+            result = Executor(r, j).run(action["name"], action["args"], {action["mod"]}, a.allow_write)
+        else:
+            result = Executor(r, j).run(a.tool, json.loads(a.args), {"filesystem","cyber","windows"}, a.allow_write)
         print(json.dumps(result, ensure_ascii=False, indent=2))
     finally:
         j.close()

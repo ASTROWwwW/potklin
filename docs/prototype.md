@@ -11,3 +11,5 @@ Model switching reported 9.77s to 35B and 4.69s to 9B vs warm 0.175/0.076s. Keep
 From repository root: python -m unittest discover -s tests -v
 List tools: python -m potklin tools
 Use plan with explicit --mods filesystem cyber and actual --model (global option before subcommand). Plans are printed, not executed. Direct run requires explicit tool and JSON arguments. Windows launch requires --allow-write and does not claim UI verification.
+
+Deterministic route: `python -m potklin instant "Lance Discord" --allow-write` (explicit permission, launcher request only). Run `python -m scripts.integration_probe --model <actual-tag>` for fixture-based planning and verification; generated plans only execute when they exactly match the test oracle. No arbitrary generated code is executed.

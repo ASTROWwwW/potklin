@@ -13,14 +13,17 @@ class Workspace:
             raise ValueError("workspace must be a directory")
 
     def path(self, name):
-        p = self.root / name
+        relative = Path(name)
+        if relative.is_absolute() or relative.anchor or ".." in relative.parts or ":" in name or "\x00" in name:
+            raise PermissionError("unsafe workspace path")
+        p = self.root / relative
         resolved = p.resolve()
         if not resolved.is_relative_to(self.root):
             raise PermissionError("outside workspace")
         # Reject symlinks and Windows junctions in existing path components.
         current = p
         while current != self.root and current.is_relative_to(self.root):
-            if current.is_symlink() or getattr(current, "is_junction", lambda: False)():
+            if current.is_symlink() or getattr(current, "is_junction", lambda: False)() or (current.exists() and getattr(current.lstat(), "st_file_attributes", 0) & 0x400):
                 raise PermissionError("linked path")
             current = current.parent
         return resolved

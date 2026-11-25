@@ -2,6 +2,10 @@
 import json
 import urllib.request
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise ValueError("local endpoint redirected")
+
 class Ollama:
     def __init__(self, model, context=8192, threads=8, timeout=300):
         self.model, self.context, self.threads, self.timeout = model, context, threads, timeout
@@ -13,7 +17,7 @@ class Ollama:
             data=None if data is None else json.dumps(data).encode(),
             headers={"Content-Type": "application/json"})
         # Never send local model data via a configured HTTP proxy.
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
         with opener.open(req, timeout=self.timeout) as response:
             return json.load(response)
 
@@ -38,4 +42,12 @@ class Ollama:
             raise ValueError("invalid plan")
         if plan["name"] is not None and not isinstance(plan["name"], str):
             raise ValueError("invalid tool name")
+        name = plan["name"]
+        if name is None:
+            if plan["args"] != {}:
+                raise ValueError("invalid empty plan")
+        elif name not in tools or tools[name].side_effect:
+            raise PermissionError("unavailable tool")
+        elif not isinstance(plan["args"], dict) or set(plan["args"]) != set(tools[name].arguments) or any(not isinstance(v, str) or len(v) > 8192 for v in plan["args"].values()):
+            raise ValueError("invalid plan arguments")
         return plan
