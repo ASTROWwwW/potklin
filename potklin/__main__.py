@@ -1,28 +1,58 @@
 import argparse
 import json
+import subprocess
+import sys
+from dataclasses import asdict
 from pathlib import Path
+from . import __version__
+from .checkpoint import Checkpoints
 from .core import Executor, Journal
-from .mods import build_registry
+from .execution import CommandSet
+from .manifests import MANIFESTS
+from .mission import MissionRunner
+from .mods import Workspace, build_registry
 from .ollama import Ollama
 from .router import route
-from .mission import MissionRunner
-from .manifests import MANIFESTS
-from dataclasses import asdict
 
-def main():
-    p = argparse.ArgumentParser()
+DEFAULT_MODEL = "huihui_ai/Qwen3.6-abliterated:35b-a3b"
+ALL_MODS = ["filesystem", "cyber", "windows", "coding", "documents"]
+
+
+def parser():
+    p = argparse.ArgumentParser(prog="potklin")
+    p.add_argument("--version", action="version", version=__version__)
     p.add_argument("--workspace", default=".")
-    p.add_argument("--journal", default="potklin-events.sqlite3")
-    p.add_argument("--model", default="huihui_ai/Qwen3.6-abliterated:35b-a3b")
+    p.add_argument("--journal", default="", help="default: ~/.potklin/journal.sqlite3")
+    p.add_argument("--model", default=DEFAULT_MODEL)
+    p.add_argument("--context", type=int, default=24576, help="model context window in tokens")
     sub = p.add_subparsers(dest="command", required=True)
     sub.add_parser("tools")
     sub.add_parser("mods")
     sub.add_parser("gui")
-    mission=sub.add_parser("mission")
+    sub.add_parser("doctor", help="check that the local model is ready")
+    mission = sub.add_parser("mission", help="run a bounded agent task")
     mission.add_argument("request")
-    mission.add_argument("--mods",nargs="+",choices=["filesystem","cyber","windows","coding","documents"],required=True)
-    mission.add_argument("--steps",type=int,default=6)
-    mission.add_argument("--think",action="store_true")
+    mission.add_argument("--mods", nargs="+", choices=ALL_MODS, default=["filesystem", "coding"])
+    mission.add_argument("--steps", type=int, default=20)
+    mission.add_argument("--think", action="store_true")
+    mission.add_argument("--allow-write", action="store_true", help="let the agent create, edit, move and remove files")
+    mission.add_argument("--allow-delete", action="store_true", help="also let the agent delete files")
+    mission.add_argument("--only", action="append", default=[], help="path or glob; when given, nothing else may be written")
+    mission.add_argument("--commands", help="JSON file: {name: [program, argument, ...]}")
+    mission.add_argument("--allow-exec", action="store_true", help="let declared commands run; they execute workspace code without a sandbox")
+    mission.add_argument("--command-timeout", type=int, default=120)
+    mission.add_argument("--check", action="append", default=[], help="exists:p, absent:p, contains:p::text, sha256:p::hex or command:name")
+    mission.add_argument("--holdout", action="append", default=[], help="check the model never sees, run once at the end")
+    mission.add_argument("--protect", action="append", default=[], help="path or glob the mission must not change")
+    mission.add_argument("--rollback-on-failure", action="store_true")
+    rollback = sub.add_parser("rollback", help="undo the file writes of a mission")
+    rollback.add_argument("mission")
+    rollback.add_argument("--force", action="store_true", help="also overwrite files edited since the mission")
+    diff = sub.add_parser("diff", help="show what a mission changed and has not been rolled back")
+    diff.add_argument("mission")
+    log = sub.add_parser("log", help="show journal events")
+    log.add_argument("mission", nargs="?")
+    log.add_argument("--limit", type=int, default=50)
     direct = sub.add_parser("run")
     direct.add_argument("tool")
     direct.add_argument("args")
@@ -33,36 +63,103 @@ def main():
     plan = sub.add_parser("plan")
     plan.add_argument("request")
     plan.add_argument("--mods", nargs="+", choices=["filesystem", "cyber", "coding", "documents"], required=True)
-    a = p.parse_args()
+    return p
+
+
+def show(value):
+    print(json.dumps(value, ensure_ascii=False, indent=2))
+
+
+def journal_path(value):
+    if value:
+        return value
+    folder = Path.home() / ".potklin"
+    folder.mkdir(exist_ok=True)
+    return folder / "journal.sqlite3"
+
+
+def progress(kind, detail):
+    label = {"started": "mission", "step": "tool", "rejected": "rejected reply", "checks_failed": "checks failed"}[kind]
+    print(f"[{label}] {detail}", file=sys.stderr, flush=True)
+
+
+def run_mission(a, journal):
+    if a.commands and not a.allow_exec:
+        raise PermissionError("--commands requires --allow-exec: commands run workspace code without a sandbox")
+    commands = CommandSet.load(a.commands, a.workspace, a.command_timeout) if a.commands else None
+    registry = build_registry(a.workspace, commands)
+    if not 8192 <= a.context <= 262144:
+        raise ValueError("--context must be within 8192..262144")
+    # About two characters of history per token left once the reply and the tool schemas are reserved.
+    budget = max(4000, min(128000, (a.context - 6000) * 2))
+    runner = MissionRunner(registry, journal, Ollama(a.model, context=a.context), Workspace(a.workspace), commands, progress, budget)
+    mods = set(a.mods) | ({"commands"} if commands else set())
+    result = runner.run(a.request, mods, a.steps, a.think, a.allow_write, a.check, a.protect, a.rollback_on_failure,
+                        a.allow_delete, a.only, a.holdout)
+    show(result)
+    if result["verified"]:
+        return 0
+    # Without checks there is nothing to fail: finishing is the best available outcome.
+    return 0 if result["status"] == "model_finished_unverified" else 1
+
+
+def dispatch(a):
     if a.command == "gui":
         from .ui import launch
-        launch(a.workspace,a.model,a.journal)
-        return
-    r = build_registry(a.workspace)
+        launch(a.workspace, a.model, journal_path(a.journal))
+        return 0
     if a.command == "mods":
-        print(json.dumps([asdict(m) for m in MANIFESTS],indent=2))
-        return
+        show([asdict(m) for m in MANIFESTS])
+        return 0
+    if a.command == "doctor":
+        models = Ollama(a.model, timeout=10).models()
+        show({"ollama": "reachable", "model": a.model, "model_installed": a.model in models, "installed": models})
+        return 0 if a.model in models else 1
     if a.command == "tools":
-        print(json.dumps(list(r.select({"filesystem", "cyber", "windows", "coding", "documents"})), indent=2))
-        return
+        show(list(build_registry(a.workspace).select(set(ALL_MODS))))
+        return 0
     if a.command == "plan":
-        result = Ollama(a.model).propose(a.request, r.select(a.mods))
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return
-    j = Journal(a.journal)
+        show(Ollama(a.model).propose(a.request, build_registry(a.workspace).select(a.mods)))
+        return 0
+    journal = Journal(journal_path(a.journal))
     try:
         if a.command == "mission":
-            result=MissionRunner(r,j,Ollama(a.model)).run(a.request,set(a.mods),a.steps,a.think)
-        elif a.command == "instant":
+            return run_mission(a, journal)
+        if a.command == "rollback":
+            result = Checkpoints(journal.db).rollback(a.mission, a.force)
+            journal.append(a.mission, "rollback", result)
+            show(result)
+            return 1 if result["conflicts"] and not a.force else 0
+        if a.command == "diff":
+            print(Checkpoints(journal.db).diff(a.mission))
+            return 0
+        if a.command == "log":
+            show(journal.events(a.mission, a.limit))
+            return 0
+        registry = build_registry(a.workspace)
+        if a.command == "instant":
             action = route(a.request)
             if action is None:
                 raise ValueError("no deterministic route; use plan or explicit run")
-            result = Executor(r, j).run(action["name"], action["args"], {action["mod"]}, a.allow_write)
+            show(Executor(registry, journal).run(action["name"], action["args"], {action["mod"]}, a.allow_write))
         else:
-            result = Executor(r, j).run(a.tool, json.loads(a.args), {"filesystem","cyber","windows","coding","documents"}, a.allow_write)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
+            show(Executor(registry, journal).run(a.tool, json.loads(a.args), set(ALL_MODS), a.allow_write))
+        return 0
     finally:
-        j.close()
+        journal.close()
+
+
+def main(argv=None):
+    a = parser().parse_args(argv)
+    try:
+        return dispatch(a)
+    except (ValueError, PermissionError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+        print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
+        return 2
+    except KeyboardInterrupt:
+        print("interrupted; undo any writes with: potklin rollback <mission> --force", file=sys.stderr)
+        return 130
+
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

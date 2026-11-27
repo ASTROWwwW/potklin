@@ -1,5 +1,6 @@
 """Local-only model adapter. Model output is data, never executable code."""
 import json
+import urllib.error
 import urllib.request
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -18,16 +19,27 @@ class Ollama:
             headers={"Content-Type": "application/json"})
         # Never send local model data via a configured HTTP proxy.
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
-        with opener.open(req, timeout=self.timeout) as response:
-            return json.load(response)
+        try:
+            with opener.open(req, timeout=self.timeout) as response:
+                return json.load(response)
+        except urllib.error.HTTPError as error:
+            detail = error.read(300).decode("utf-8", errors="replace")
+            raise RuntimeError(f"Ollama returned HTTP {error.code}: {detail}") from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Ollama unreachable on 127.0.0.1:11434 ({error.reason}); start it with 'ollama serve'") from error
 
-    def chat(self, messages, think=False, tokens=512, structured=False):
+    def models(self):
+        return sorted(m["name"] for m in self.request("/api/tags")["models"])
+
+    def chat(self, messages, think=False, tokens=512, structured=False, tools=None):
         body = {"model": self.model, "messages": messages, "stream": False,
                 "think": think, "keep_alive": "30m",
                 "options": {"num_ctx": self.context, "num_thread": self.threads,
                             "num_predict": tokens, "temperature": 0, "seed": 42}}
         if structured:
             body["format"] = "json"
+        if tools:
+            body["tools"] = tools
         return self.request("/api/chat", body)
 
     def embed(self, text, model):

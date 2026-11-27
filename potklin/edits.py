@@ -1,32 +1,64 @@
 """Explicit, compare-and-swap text edits in a trusted local workspace."""
 import hashlib
 import os
+import shutil
 import tempfile
+
+MAX_FILE = 1_048_576
+
 
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
-def replace(workspace,path,expected_sha256,old,new):
-    target=workspace.path(path)
-    before=workspace.read(path)["text"]
-    raw=target.read_bytes()
-    if digest(raw)!=expected_sha256 or raw.decode("utf-8")!=before:
-        raise ValueError("stale revision")
-    if not old or before.count(old)!=1:
-        raise ValueError("replacement must match once")
-    after=before.replace(old,new,1).encode("utf-8")
-    if len(after)>65536:
-        raise ValueError("size limit")
-    fd,name=tempfile.mkstemp(prefix=".potklin-",dir=target.parent)
+
+def write_atomic(target, data, expected_sha256=None):
+    """Replace target in one step, keeping its permissions."""
+    fd, name = tempfile.mkstemp(prefix=".potklin-", dir=target.parent)
     try:
-        with os.fdopen(fd,"wb") as f:
-            f.write(after)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        if digest(target.read_bytes())!=expected_sha256:
+        if target.exists():
+            shutil.copymode(target, name)
+        if expected_sha256 is not None and digest(target.read_bytes()) != expected_sha256:
             raise ValueError("stale revision")
-        os.replace(name,target)
+        os.replace(name, target)
     finally:
         if os.path.exists(name):
             os.unlink(name)
-    return {"path":path,"sha256":digest(after)}
+
+
+def replace(workspace, path, expected_sha256, old, new):
+    target = workspace.path(path)
+    raw = workspace.load(path)
+    if digest(raw) != expected_sha256:
+        raise ValueError("stale revision")
+    before = raw.decode("utf-8")
+    # Models emit LF; keep CRLF files editable without rewriting their line endings.
+    if old not in before and "\r\n" in before and "\r" not in old + new:
+        old, new = old.replace("\n", "\r\n"), new.replace("\n", "\r\n")
+    found = before.count(old) if old else 0
+    if found != 1:
+        advice = "include more surrounding lines" if found > 1 else "read the file again and copy it exactly, or use files.write"
+        raise ValueError(f"`old` must occur exactly once but occurs {found} times; {advice}")
+    after = before.replace(old, new, 1).encode("utf-8")
+    if len(after) > MAX_FILE:
+        raise ValueError("size limit")
+    write_atomic(target, after, expected_sha256)
+    return {"path": path, "sha256": digest(after)}
+
+
+def overwrite(workspace, path, expected_sha256, text):
+    """Rewrite a whole file, only if it still has the revision that was read."""
+    target = workspace.path(path)
+    before = workspace.load(path)
+    if digest(before) != expected_sha256:
+        raise ValueError("stale revision")
+    if b"\r\n" in before and "\r" not in text:
+        text = text.replace("\n", "\r\n")
+    after = text.encode("utf-8")
+    if len(after) > MAX_FILE:
+        raise ValueError("size limit")
+    write_atomic(target, after, expected_sha256)
+    return {"path": path, "sha256": digest(after)}

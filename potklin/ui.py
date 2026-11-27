@@ -27,7 +27,8 @@ def launch(workspace,model,journal):
             j=None
             try:
                 j=Journal(journal)
-                result=MissionRunner(build_registry(workspace),j,Ollama(model)).run(text,{"filesystem","coding","cyber","documents"},10,True)
+                # Thinking alone may use 8192 output tokens, so the default 8192 window is too small.
+                result=MissionRunner(build_registry(workspace),j,Ollama(model,context=24576)).run(text,{"filesystem","coding","cyber","documents"},10,True)
                 events.put(json.dumps(result,ensure_ascii=False,indent=2))
             except Exception as e:
                 events.put(type(e).__name__+": "+str(e))

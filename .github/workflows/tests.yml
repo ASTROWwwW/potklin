@@ -19,6 +19,9 @@ jobs:
       - run: python -m scripts.git_probe
       - run: python -m scripts.security_eval --repeats 2
       - run: python -m potklin.commands --help
+      - run: python -m pip install .
+      - run: potklin --version
+      - run: potklin tools
   browser:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -31,6 +34,7 @@ jobs:
       - run: python -m playwright install --with-deps chromium
       - run: python -m scripts.browser_probe
       - run: python -m scripts.browser_agent_probe
+      - run: python -m scripts.browser_scope_probe
       - run: python -m scripts.vision_fixture
   auxiliary:
     runs-on: ubuntu-latest

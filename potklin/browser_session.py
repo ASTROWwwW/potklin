@@ -1,6 +1,8 @@
 """User-scoped browser navigation. Model output cannot expand the origin set."""
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 from dataclasses import dataclass
+
+MAX_REDIRECTS=5
 
 def origin(url):
     if not isinstance(url,str) or "\\" in url or any(ord(x)<32 or ord(x)==127 for x in url):
@@ -36,7 +38,12 @@ class BrowserSession:
         try:
             self.browser=self.p.chromium.launch(headless=True,args=["--disable-background-networking"])
             self.ctx=self.browser.new_context(accept_downloads=False,service_workers="block")
-            self.ctx.route("**/*",lambda route:route.continue_() if self.scope.allows(route.request.url) and route.request.method in {"GET","HEAD"} else route.abort())
+            self.redirect=None
+            self.page=None
+            self.ctx.route("**/*",self._route)
+            # route() does not see WebSockets. A handler that never calls connect_to_server keeps
+            # them off the network; closing the socket here deadlocks the sync API.
+            self.ctx.route_web_socket("**/*",lambda socket:None)
             self.page=self.ctx.new_page()
             self.page.set_default_timeout(5000)
             return self
@@ -48,20 +55,48 @@ class BrowserSession:
             self.browser.close()
         finally:
             self.p.stop()
+    def _route(self,route):
+        # Playwright does not call a route handler again for a redirect target, so the
+        # browser must never follow one: fetch without redirects and re-check each hop.
+        from playwright.sync_api import Error
+        request=route.request
+        if not self.scope.allows(request.url) or request.method not in {"GET","HEAD"}:
+            route.abort()
+            return
+        try:
+            response=route.fetch(max_redirects=0,timeout=10000)
+        except Error:
+            route.abort()
+            return
+        location=response.headers.get("location")
+        if 300<=response.status<400 and location:
+            if self.page and request.is_navigation_request() and request.frame==self.page.main_frame:
+                self.redirect=urljoin(request.url,location)
+            # "aborted" avoids an error page that would interrupt the next navigation.
+            route.abort("aborted")
+            return
+        route.fulfill(response=response)
     def navigate(self,url):
-        if not self.scope.allows(url):
-            raise PermissionError("outside browser scope")
-        self.page.goto(url,wait_until="domcontentloaded",timeout=10000)
-        if not self.scope.allows(self.page.url):
-            raise PermissionError("redirect outside scope")
-        return self.observe()
+        from playwright.sync_api import Error
+        for _ in range(MAX_REDIRECTS+1):
+            if not self.scope.allows(url):
+                raise PermissionError("outside browser scope")
+            self.redirect=None
+            try:
+                self.page.goto(url,wait_until="domcontentloaded",timeout=10000)
+            except Error:
+                if self.redirect is None:
+                    raise
+                url=self.redirect
+                continue
+            return self.observe()
+        raise PermissionError("too many redirects")
     def observe(self):
         if not self.scope.allows(self.page.url):
             raise PermissionError("outside browser scope")
         links=[]
         for el in self.page.locator("a[href]").all()[:100]:
             href=el.get_attribute("href") or ""
-            from urllib.parse import urljoin
             url=urljoin(self.page.url,href)
             if self.scope.allows(url):
                 links.append({"url":url,"text":el.inner_text()[:200]})

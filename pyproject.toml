@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "potklin"
+dynamic = ["version"]
+description = "Local-first agent for code and file tasks, with success decided by user-written checks"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+browser = ["playwright==1.51.0"]
+windows = ["pywinauto==0.6.9; sys_platform == 'win32'"]
+
+[project.scripts]
+potklin = "potklin.__main__:main"
+
+[tool.setuptools]
+packages = ["potklin"]
+
+[tool.setuptools.dynamic]
+version = { attr = "potklin.__version__" }

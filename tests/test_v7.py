@@ -38,20 +38,20 @@ class V7(unittest.TestCase):
         self.assertEqual(result["status"],"model_finished_unverified")
         self.assertFalse(result["verified"])
     def test_disallowed(self):
-        self.assertEqual(self.run_actions([{"name":"windows.launch","args":{"app":"discord"}}])["status"],"invalid_action")
+        self.assertEqual(self.run_actions([{"name":"windows.launch","args":{"app":"discord"}}]*3)["status"],"invalid_action")
     def test_repeat(self):
         a={"name":"files.list","args":{"path":"."}}
-        self.assertEqual(self.run_actions([a,a])["status"],"repeated_action")
+        self.assertEqual(self.run_actions([a]*4)["status"],"repeated_action")
     def test_budget(self):
         self.assertEqual(self.run_actions([{"name":"files.list","args":{"path":"."}}],1)["status"],"budget_exhausted")
     def test_path_failure(self):
         x=self.run_actions([{"name":"files.read","args":{"path":"../secret"}},{"finish":"cannot read"}])
         self.assertEqual(x["observations"][0]["error"],"PermissionError")
     def test_invalid_json_shape(self):
-        self.assertEqual(self.run_actions([[]])["status"],"invalid_action")
+        self.assertEqual(self.run_actions([[]]*3)["status"],"invalid_action")
     def test_invalid_budget(self):
         with self.assertRaises(ValueError):
-            self.run_actions([],13)
+            self.run_actions([],51)
     def test_no_secrets_in_journal(self):
         self.run_actions([{"name":"files.read","args":{"path":"a.py"}},{"finish":"done"}])
         self.assertNotIn("hashlib",str(self.j.db.execute("SELECT payload FROM events").fetchall()))

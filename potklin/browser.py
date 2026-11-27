@@ -15,6 +15,7 @@ def exercise(workspace,path,button_id,output_id):
         try:
             context=browser.new_context(accept_downloads=False,service_workers="block")
             context.route("**/*",lambda route:route.abort())
+            context.route_web_socket("**/*",lambda socket:None)
             page=context.new_page()
             page.set_default_timeout(5000)
             page.set_content(body,wait_until="domcontentloaded",timeout=5000)
