@@ -196,6 +196,42 @@ class SecondPass(Temp):
         self.assertEqual(sorted(checks.fingerprint(self.root, ["tests/*.js"])), ["tests/a.js", "tests/node_modules/helper.js"])
 
 
+class ThirdPass(Temp):
+    def move(self, store, source, destination):
+        workspace = Workspace(self.root)
+        seqs = [(store.snapshot(workspace, "m", n), n) for n in (source, destination)]
+        (self.root / source).rename(self.root / destination)
+        for seq, name in seqs:
+            store.seal(workspace, seq, name)
+
+    def create(self, store, name, text):
+        workspace = Workspace(self.root)
+        seq = store.snapshot(workspace, "m", name)
+        self.put(name, text)
+        store.seal(workspace, seq, name)
+
+    @unittest.skipUnless(os.name == "nt", "case-insensitive disk")
+    def test_our_directory_under_another_case_does_not_block_rollback(self):
+        self.put("notes", "original")
+        store = Checkpoints(self.journal.db)
+        self.move(store, "notes", "y")
+        self.create(store, "NOTES/z", "z")
+        self.assertEqual(store.rollback("m"), {"restored": ["NOTES/z", "notes", "y"], "conflicts": [], "unrestored": []})
+        self.assertEqual([(p.name, p.read_bytes()) for p in self.root.iterdir()], [("notes", b"original")])
+
+    def test_distinct_non_ascii_names_are_never_merged(self):
+        lower, upper = "\U00010428.cfg", "\U00010400.cfg"
+        self.put(lower, "user")
+        store = Checkpoints(self.journal.db)
+        self.create(store, upper, "new")
+        if (self.root / lower).read_text() != "user":
+            self.skipTest("this disk treats the two names as one file")
+        self.create(store, lower, "edited")
+        self.assertEqual(store.paths("m"), sorted([lower, upper]))
+        self.assertEqual(store.rollback("m")["unrestored"], [])
+        self.assertEqual([(p.name, p.read_bytes()) for p in self.root.iterdir()], [(lower, b"user")])
+
+
 class SlowAndBrokenResponses(unittest.TestCase):
     def serve(self, reply):
         import socket
@@ -228,6 +264,22 @@ class SlowAndBrokenResponses(unittest.TestCase):
         url = self.serve(trickle)
         with patch.object(browser_session, "FETCH_DEADLINE", 1), self.assertRaisesRegex(ValueError, "too slow"):
             browser_session.fetch(url, "GET", {})
+
+    def test_trickled_headers_hit_the_total_deadline(self):
+        import time
+        from potklin import browser_session
+
+        def trickle(client):
+            client.sendall(b"HTTP/1.1 200 OK\r\n")
+            for i in range(60):
+                client.sendall(f"X-{i}: y\r\n".encode())
+                time.sleep(0.2)
+
+        url = self.serve(trickle)
+        started = time.monotonic()
+        with patch.object(browser_session, "FETCH_DEADLINE", 1), self.assertRaisesRegex(ValueError, "too slow"):
+            browser_session.fetch(url, "GET", {})
+        self.assertLess(time.monotonic() - started, 3)
 
     def test_malformed_replies_raise_handled_errors(self):
         import http.client

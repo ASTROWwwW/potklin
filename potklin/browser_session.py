@@ -1,5 +1,7 @@
 """User-scoped browser navigation. Model output cannot expand the origin set."""
 import http.client
+import queue
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -21,7 +23,25 @@ class _NoFollow(urllib.request.HTTPRedirectHandler):
         return None
 
 def fetch(url,method,headers):
-    """One approved request, without proxy or redirect, performed outside the browser."""
+    """One approved request under a wall-clock limit, whatever part of the response is slow."""
+    outcome=queue.Queue(1)
+    def work():
+        try:
+            outcome.put((True,_transfer(url,method,headers)))
+        except Exception as error:
+            outcome.put((False,error))
+    # An abandoned transfer keeps its own socket timeouts and size limit, and dies with the process.
+    threading.Thread(target=work,daemon=True).start()
+    try:
+        succeeded,value=outcome.get(timeout=FETCH_DEADLINE)
+    except queue.Empty:
+        raise ValueError("response too slow") from None
+    if not succeeded:
+        raise value
+    return value
+
+def _transfer(url,method,headers):
+    """The request itself, without proxy or redirect, performed outside the browser."""
     kept={k:v for k,v in headers.items() if k.lower() in FORWARDED}
     kept["Accept-Encoding"]="identity"
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),_NoFollow())

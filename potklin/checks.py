@@ -10,7 +10,7 @@ from .edits import digest
 NEVER_WALKED = {".git", "__pycache__", ".pytest_cache"}
 # Large dependency trees are walked only when a pattern reaches into them.
 HEAVY_DIRS = {"node_modules", ".venv", "venv"}
-MAX_PROTECTED = 5000
+MAX_PROTECTED = 50000
 
 
 @dataclass(frozen=True)

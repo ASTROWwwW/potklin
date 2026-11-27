@@ -8,6 +8,7 @@ import json
 import os
 import stat
 from pathlib import Path
+from .checks import normalize
 from .edits import MAX_FILE, digest, write_atomic
 from .mods import Workspace
 
@@ -27,6 +28,12 @@ def state(workspace, path):
 
 
 UNRESTORABLE = {"directory", "unreadable"}
+
+
+def same_file_key(path):
+    """Equal for two spellings the disk treats as one file. Only ASCII is folded: merging two files
+    the disk keeps apart would drop a pre-image, while missing a merge only makes rollback refuse."""
+    return normalize(path, allow=True)
 
 
 class Checkpoints:
@@ -99,7 +106,7 @@ class Checkpoints:
         items, new_dirs = {}, set()
         for _, path, before, mode, dirs, after, done in rows:
             # Where the disk ignores case, two spellings are one file: its first record holds the original.
-            item = items.setdefault(os.path.normcase(path), {"path": path, "paths": set(), "before": before, "mode": mode,
+            item = items.setdefault(same_file_key(path), {"path": path, "paths": set(), "before": before, "mode": mode,
                                                              "original": None if before is None else digest(before)})
             item["paths"].add(path)
             item["after"], item["done"] = after, done
@@ -113,13 +120,14 @@ class Checkpoints:
         workspace, items, new_dirs = self._pending(mission)
         if workspace is None:
             raise ValueError("no checkpoint for this mission")
-        created = {os.path.normcase(i["path"]) for i in items if i["before"] is None}
+        created = {same_file_key(i["path"]) for i in items if i["before"] is None}
+        made = {same_file_key(name) for name in new_dirs}
 
         def ours(item):
             """A directory the mission made, holding nothing but files the mission made."""
-            if item["current"] != "directory" or item["path"] not in new_dirs:
+            if item["current"] != "directory" or same_file_key(item["path"]) not in made:
                 return False
-            return all(f.is_dir() or os.path.normcase(f.relative_to(workspace.root).as_posix()) in created
+            return all(f.is_dir() or same_file_key(f.relative_to(workspace.root).as_posix()) in created
                        for f in (workspace.root / item["path"]).rglob("*"))
 
         def prune():
