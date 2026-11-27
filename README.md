@@ -1,8 +1,49 @@
 # Potklin
 
-A local-first general-purpose AI agent research project, targeting consumer hardware. Potklin aims to complete real tasks quickly, autonomously and with verifiable evidence rather than merely generate answers.
+A local-first agent for code and file tasks, targeting consumer hardware. It runs on a local Ollama model, and success
+is decided by checks **you** write, never by what the model claims.
 
-**Status:** early executable prototype; no general autonomous agent or GPT-5 parity claimed.
+**Status:** release candidate for one scope: bounded tasks in a workspace you trust. It is not a general autonomous
+agent, and no GPT-5 parity is claimed.
+
+## Quick start
+
+Python 3.12 or newer, [Ollama](https://ollama.com) with a model that supports tool calling, no runtime dependency.
+
+```sh
+python -m pip install .
+potklin doctor
+potklin --workspace path/to/project mission "Where is the retry delay computed?"
+```
+
+Fix something and prove it:
+
+```sh
+potklin --workspace path/to/project mission "Fix the failing test" \
+  --allow-write --only src --protect tests \
+  --commands ~/commands.json --allow-exec --check command:test --rollback-on-failure
+```
+
+**Read [Using the agent](docs/agent.md) before you grant write or exec permissions.** Commands are not sandboxed, and
+text inside your files can steer the model.
+
+## What you get
+
+- Tools to read, search, edit, create, move and (with its own flag) delete files, plus git status and diff.
+- Commands you declare, which the model can start by name only.
+- Acceptance checks, holdout checks the model never sees, read-only and write-only path lists.
+- A diff of every mission and a rollback of its file writes.
+- A SQLite journal of tool calls and outcomes.
+
+## Develop
+
+```sh
+python -m unittest discover -s tests -v
+python -m scripts.agent_eval --model <ollama-tag> --variants 7 31
+```
+
+`python -m potklin.commands --help` exposes the experimental commands (browser, memory, git, desktop automation).
+Mods are authored by developers, never generated or installed by the model.
 
 ## Design principles
 
@@ -15,29 +56,18 @@ A local-first general-purpose AI agent research project, targeting consumer hard
 
 ## Documentation
 
+- [Using the agent](docs/agent.md)
+- [Agent evaluation results](docs/agent-eval.md)
 - [Architecture](docs/architecture.md)
 - [Model and inference research](docs/inference.md)
 - [Evaluation protocol](docs/evaluation.md)
-- [Roadmap](docs/roadmap.md)
+- [Roadmap](docs/roadmap.md) and [current roadmap](docs/roadmap-current.md)
 - [Security and reliability](docs/security.md)
 - [Research provenance](docs/research.md)
+- History: [benchmarks](docs/benchmarks-2026-11-25.md), [hardware lab](docs/hardware-lab.md),
+  [early prototype](docs/prototype.md), [0.3.0 increment](docs/combined-release.md), [0.5 scope](docs/roadmap-v05.md)
 
-Reference target: RTX 5080 16 GiB, 64 GiB RAM, Core Ultra 9 285K. Hardware-specific targets are experimental, not requirements for future users.
+Reference hardware: RTX 5080 16 GiB, 64 GiB RAM, Core Ultra 9 285K. Hardware-specific targets are experimental, not
+requirements for future users.
 
 License: not yet selected. Do not assume permission to redistribute third-party model weights or source code.
-
-## Research update (2026-11-25)
-
-Local benchmark campaign completed through V3; provisional 35B-A3B main candidate and 9B fast candidate. See [benchmark findings](docs/benchmarks-2026-11-25.md), [current execution roadmap](docs/roadmap-current.md) and [hardware lab](docs/hardware-lab.md). No working agent yet.
-
-## Prototype
-
-See [prototype scope and V4/V5 findings](docs/prototype.md). Python 3.12, standard library only. Run `python -m unittest discover -s tests -v` and `python -m potklin tools` from the checkout. Mods are authored by developers, never generated or installed by the model.
-
-## Combined increment (0.3.0)
-
-See [current implementation and limitations](docs/combined-release.md). Run `python -m scripts.expanded_probe` for offline DAG regressions. This is not a stable V1.0 release.
-
-## Prototype 0.5 — consolidated evaluation
-
-See [scope and validation](docs/roadmap-v05.md). Developer-authored modules only. `python -m potklin.commands --help` exposes explicit advanced commands. Side effects require user confirmation. The local campaign includes exact-oracle reasoning, constrained code repair, long-context retrieval, browser fixtures, OpenVINO and optional LoRA smoke. Do not confuse synthetic fixture accuracy with general intelligence or hardware validation.
