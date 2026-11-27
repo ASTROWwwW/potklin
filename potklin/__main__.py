@@ -1,7 +1,15 @@
+import os
+import sys
+
+# `python -m potklin` puts the current directory first on the module path, where a mission may write
+# json.py or argparse.py. Drop it before anything else is imported.
+if __name__ == "__main__" and sys.path and sys.path[0] in ("", os.getcwd()):
+    del sys.path[0]
+
 import argparse
 import json
+import sqlite3
 import subprocess
-import sys
 from dataclasses import asdict
 from pathlib import Path
 from . import __version__
@@ -99,6 +107,8 @@ def run_mission(a, journal):
     show(result)
     if result["verified"]:
         return 0
+    if result["status"] == "failed":
+        return 2
     # Without checks there is nothing to fail: finishing is the best available outcome.
     return 0 if result["status"] == "model_finished_unverified" else 1
 
@@ -129,12 +139,17 @@ def dispatch(a):
             result = Checkpoints(journal.db).rollback(a.mission, a.force)
             journal.append(a.mission, "rollback", result)
             show(result)
-            return 1 if result["conflicts"] and not a.force else 0
+            return 1 if result["unrestored"] else 0
         if a.command == "diff":
+            if not journal.events(a.mission, 1):
+                raise ValueError("unknown mission")
             print(Checkpoints(journal.db).diff(a.mission))
             return 0
         if a.command == "log":
-            show(journal.events(a.mission, a.limit))
+            events = journal.events(a.mission, a.limit)
+            if a.mission and not events:
+                raise ValueError("unknown mission")
+            show(events)
             return 0
         registry = build_registry(a.workspace)
         if a.command == "instant":
@@ -150,14 +165,21 @@ def dispatch(a):
 
 
 def main(argv=None):
+    # A redirected Windows console defaults to a legacy code page that cannot print most results.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+    # Processes started from here must not search the current directory for programs either.
+    os.environ.setdefault("NoDefaultCurrentDirectoryInExePath", "1")
     a = parser().parse_args(argv)
     try:
         return dispatch(a)
-    except (ValueError, PermissionError, OSError, RuntimeError, subprocess.SubprocessError) as error:
+    except (ValueError, PermissionError, OSError, RuntimeError, subprocess.SubprocessError, sqlite3.Error) as error:
         print(f"error: {type(error).__name__}: {error}", file=sys.stderr)
         return 2
     except KeyboardInterrupt:
-        print("interrupted; undo any writes with: potklin rollback <mission> --force", file=sys.stderr)
+        print("interrupted. Undo the writes with: potklin rollback <mission>   (add --force only if it reports conflicts "
+              "and you accept losing later edits to those files)", file=sys.stderr)
         return 130
 
 

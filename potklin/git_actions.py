@@ -1,9 +1,9 @@
 """Explicit trusted-checkout Git actions, no model-generated command strings."""
 import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
+from .programs import find_program
 
 def branch_name(value):
     if not isinstance(value,str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9/_-]{0,79}",value) or ".." in value or "//" in value or value.endswith("/"):
@@ -15,9 +15,7 @@ class LocalGit:
         self.root=Path(root).resolve(strict=True)
         if not (self.root/".git").is_dir():
             raise ValueError("trusted ordinary checkout required")
-        self.git=shutil.which("git")
-        if not self.git:
-            raise FileNotFoundError("git")
+        self.git=find_program("git",self.root)
         self.env={k:v for k,v in os.environ.items() if not k.upper().startswith("GIT_")}
         self.env.update(GIT_CONFIG_NOSYSTEM="1",GIT_CONFIG_GLOBAL=os.devnull,GIT_TERMINAL_PROMPT="0")
     def _run(self,*args,config=()):

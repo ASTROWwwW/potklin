@@ -40,6 +40,10 @@ def short(value, limit=200):
     return value if len(value) <= limit else value[:limit] + "...[" + str(len(value)) + " chars]"
 
 
+def size(message):
+    return len(json.dumps(message, ensure_ascii=False))
+
+
 def render(observation):
     data = observation.get("data", "")
     if observation.get("truncated"):
@@ -77,8 +81,9 @@ class MissionRunner:
         hidden = {c.target for c in holdout if c.kind == "command"} - {c.target for c in checks if c.kind == "command"}
         visible = [n for n in self.commands.names if n not in hidden] if self.commands is not None else []
         guarded = acceptance.fingerprint(self.workspace.root, protect) if protect else {}
-        if protect and not guarded:
-            raise ValueError("protect patterns match no file")
+        unmatched = [p for p in protect if not any(acceptance.matches(name, [p]) for name in guarded)]
+        if unmatched:
+            raise ValueError("protect patterns match no file: " + ", ".join(unmatched))
         if (allow_delete or only) and not allow_write:
             raise ValueError("allow_delete and only require allow_write")
         writes = set(FILE_WRITES) if allow_write else set()
@@ -105,7 +110,11 @@ class _Run:
         self.turns = []
         self.hashes = {}
         self.seen = {}
+        # version moves on any side effect; writes only when a file tool changed something.
         self.version = 0
+        self.writes = 0
+        self.failed_calls = set()
+        self.omitted = 0
         self.strikes = 0
         self.failed_finish = None
         self.passing = []
@@ -125,6 +134,10 @@ class _Run:
                 if status_after:
                     status = status_after
                     break
+        except KeyboardInterrupt:
+            outcome = self.checkpoints.rollback(self.mission) if rollback_on_failure and self.checkpoints.known(self.mission) else None
+            journal.append(self.mission, "mission_interrupted", {"rollback": outcome})
+            raise
         except Exception as e:
             status, error = "failed", short(f"{type(e).__name__}: {e}", 500)
             journal.append(self.mission, "mission_error", {"type": type(e).__name__})
@@ -149,12 +162,15 @@ class _Run:
                 status = "verified" if verified else "checks_passed_non_discriminating"
             elif status == "model_finished_unverified":
                 status = "verification_failed"
-        changes = self.checkpoints.paths(self.mission)
-        diff = self.checkpoints.diff(self.mission) if changes else ""
-        rollback = None
+        changes, diff, rollback = [], "", None
         succeeded = verified or status in {"checks_passed_non_discriminating", "model_finished_unverified"}
-        if rollback_on_failure and changes and not succeeded:
-            rollback = self.checkpoints.rollback(self.mission)
+        try:
+            changes = self.checkpoints.paths(self.mission)
+            diff = self.checkpoints.diff(self.mission) if changes else ""
+            if rollback_on_failure and changes and not succeeded:
+                rollback = self.checkpoints.rollback(self.mission)
+        except Exception as e:
+            error = short(f"{error + '; ' if error else ''}checkpoint: {type(e).__name__}: {e}", 500)
         journal.append(self.mission, "mission_finished", {"status": status, "steps": len(self.observations),
                                                          "verified": verified, "changes": changes})
         return {"mission": self.mission, "status": status, "verified": verified, "answer": answer, "error": error,
@@ -189,14 +205,14 @@ class _Run:
         calls = message.get("tool_calls") or []
         if calls:
             return self.native(content, calls[:CALLS_PER_REPLY]), None
-        assistant = {"role": "assistant", "content": content}
+        assistant = {"role": "assistant", "content": short(content, HISTORY_ARGUMENT_LIMIT)}
         text = content.strip()
         try:
             action = json.loads(text)
         except json.JSONDecodeError:
             if reply.get("done_reason") == "length":
                 return self.strike(assistant, "invalid_action", "reply was cut off; make a smaller change"), None
-            if not text or text[0] in "{[`<":
+            if not text or text.startswith(("{", "```json", "<tool_call", "<function")):
                 return self.strike(assistant, "invalid_action", "malformed reply; call a tool or write a plain-text report"), None
             return self.finish(assistant, text[:8000])
         if isinstance(action, dict) and set(action) == {"finish"} and isinstance(action["finish"], str):
@@ -208,7 +224,7 @@ class _Run:
 
     def native(self, content, calls):
         kept = []
-        assistant = {"role": "assistant", "content": content, "tool_calls": kept}
+        assistant = {"role": "assistant", "content": short(content, HISTORY_ARGUMENT_LIMIT), "tool_calls": kept}
         for call in calls:
             function = call.get("function") or {}
             name, arguments = str(function.get("name")), function.get("arguments")
@@ -232,13 +248,18 @@ class _Run:
         if not isinstance(arguments, dict):
             return self.strike(assistant, "invalid_action", "arguments must be an object of named values", role, tool_name)
         args = {k: str(v) if type(v) is int else v for k, v in arguments.items()}
-        key = (self.version, json.dumps([name, args], sort_keys=True))
+        # A command may change files, so reads are allowed again after it. The command itself is
+        # only worth repeating once a file tool has written something.
+        generation = self.writes if name == "commands.run" else self.version
+        key = (generation, json.dumps([name, args], sort_keys=True))
         if key in self.seen:
             return self.strike(assistant, "repeated_action", "you already did exactly this and nothing changed since; "
                                "its result is above. Take the next step", role, tool_name)
         self.seen[key] = len(self.observations)
         self.strikes = 0
         self.call(name, args)
+        if "error" in self.observations[-1]:
+            self.failed_calls.add(key)
         self.record(assistant, role, tool_name)
         return None
 
@@ -283,10 +304,21 @@ class _Run:
             task += "\nRead-only paths: " + ", ".join(self.protect)
         if self.only:
             task += "\nOnly these paths may be written: " + ", ".join(self.only)
+        budget = self.runner.context_budget
+        # Drop the oldest exchanges once the model's own words would take over half of the budget.
+        while len(self.turns) - self.omitted > 1 and sum(size(a) for a, _ in self.turns[self.omitted:]) > budget // 2:
+            dropped = {index for _, _, index in self.turns[self.omitted][1]}
+            self.seen = {k: v for k, v in self.seen.items() if v not in dropped}
+            self.omitted += 1
+        turns = self.turns[self.omitted:]
+        if self.omitted:
+            task += f"\n{self.omitted} earlier steps were omitted to save space; call tools again if you need their results."
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": task}]
         results = [render(o) for o in self.observations]
-        packed = pack([{"data": text} for text in results], self.runner.context_budget)
-        for assistant, entries in self.turns:
+        first = turns[0][1][0][2] if turns else len(results)
+        room = max(1000, budget - sum(size(a) for a, _ in turns))
+        packed = [None] * first + pack([{"data": text} for text in results[first:]], room)
+        for assistant, entries in turns:
             messages.append(assistant)
             for role, tool, index in entries:
                 content = packed[index].get("data", "")
@@ -325,17 +357,20 @@ class _Run:
                 raise ValueError("read the file before changing it")
             args["expected_sha256"] = known
         check_arguments(tool, args)
-        snapshots = []
+        written = []
         if name in FILE_WRITES:
             workspace = self.runner.workspace
             for argument in FILE_WRITES[name]:
                 relative = workspace.path(args[argument]).relative_to(workspace.root).as_posix()
                 if acceptance.matches(relative, self.protect):
                     raise PermissionError("read-only path for this mission: " + relative)
-                if self.only and not acceptance.matches(relative, self.only):
+                if self.only and not acceptance.matches(relative, self.only, allow=True):
                     raise PermissionError("outside the writable paths of this mission: " + relative)
-            snapshots = [(self.checkpoints.snapshot(workspace, self.mission, args[a]), args[a]) for a in FILE_WRITES[name]]
+            written = [args[a] for a in FILE_WRITES[name]]
+        snapshots = []
         try:
+            for path in written:
+                snapshots.append((self.checkpoints.snapshot(self.runner.workspace, self.mission, path), path))
             result = Executor(self.runner.registry, self.runner.journal).run(name, args, self.mods, tool.side_effect)
         finally:
             for seq, path in snapshots:
@@ -343,10 +378,16 @@ class _Run:
         value = result["result"]
         if tool.side_effect:
             self.version += 1
+        if name in FILE_WRITES:
+            self.writes += 1
         if isinstance(value, dict) and "sha256" in value:
             path = value.get("destination") or value.get("path")
             if path is not None:
-                self.hashes[self.file_key(path)] = value["sha256"]
+                key = self.file_key(path)
+                if self.hashes.get(key) != value["sha256"]:
+                    self.hashes[key] = value["sha256"]
+                    self.seen = {k: v for k, v in self.seen.items() if k not in self.failed_calls}
+                    self.failed_calls.clear()
             value = {k: v for k, v in value.items() if k != "sha256"}
         # Long text stays unescaped here, so the model sees one level of JSON escaping instead of two.
         bodies = [k for k in ("text", "output", "diff") if isinstance(value, dict) and k in value]

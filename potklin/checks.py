@@ -1,11 +1,15 @@
 """Acceptance criteria written by the user. The model can neither add nor change them."""
 import fnmatch
 import os
+import posixpath
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from .edits import digest
 
-SKIPPED_DIRS = {".git", "__pycache__", ".pytest_cache", "node_modules", ".venv", "venv"}
+NEVER_WALKED = {".git", "__pycache__", ".pytest_cache"}
+# Large dependency trees are walked only when a pattern reaches into them.
+HEAVY_DIRS = {"node_modules", ".venv", "venv"}
 MAX_PROTECTED = 5000
 
 
@@ -68,14 +72,25 @@ def evaluate(checks, workspace, commands=None):
     return results
 
 
-def normalize(relative):
-    value = relative.replace("\\", "/").strip("/")
-    return value.casefold() if os.name == "nt" else value
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
 
 
-def matches(relative, patterns):
-    name = normalize(relative)
-    return any(name == p or name.startswith(p + "/") or fnmatch.fnmatchcase(name, p) for p in map(normalize, patterns))
+def normalize(relative, allow=False):
+    value = posixpath.normpath(relative.replace("\\", "/")).strip("/")
+    if allow:
+        # Unicode folding would equate names the disk keeps apart (long s, sharp s, Kelvin sign).
+        return value.translate(ASCII_LOWER) if os.name == "nt" else value
+    return value.casefold() if os.name == "nt" or sys.platform == "darwin" else value
+
+
+def matches(relative, patterns, allow=False):
+    """Only * and ? are wildcards; brackets are literal, as in app/[id].tsx.
+
+    With allow=True the patterns grant access and compare strictly; otherwise they protect and compare broadly.
+    """
+    name = normalize(relative, allow)
+    return any(name == p or name.startswith(p + "/") or fnmatch.fnmatchcase(name, p.replace("[", "[[]"))
+               for p in (normalize(pattern, allow) for pattern in patterns))
 
 
 def fingerprint(root, patterns):
@@ -83,8 +98,17 @@ def fingerprint(root, patterns):
     found = {}
     if not patterns:
         return found
+
+    def worth_walking(base, name):
+        if name in NEVER_WALKED:
+            return False
+        if name not in HEAVY_DIRS:
+            return True
+        relative = Path(base, name).relative_to(root).as_posix()
+        return matches(relative, patterns) or any(normalize(p).startswith(normalize(relative) + "/") for p in patterns)
+
     for base, dirs, names in os.walk(root, followlinks=False):
-        dirs[:] = [d for d in dirs if d not in SKIPPED_DIRS]
+        dirs[:] = [d for d in dirs if worth_walking(base, d)]
         for name in names:
             file = Path(base, name)
             relative = file.relative_to(root).as_posix()

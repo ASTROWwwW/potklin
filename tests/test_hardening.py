@@ -69,6 +69,85 @@ class ProtectedPaths(Temp):
                 Workspace(self.root).path(name)
 
 
+class RedTeam(Temp):
+    def test_planted_git_is_never_started(self):
+        self.put(".git/HEAD", "ref: refs/heads/main\n")
+        marker = self.root / "owned.txt"
+        if os.name == "nt":
+            self.put("git.cmd", f"@echo off\r\necho owned> \"{marker}\"\r\n")
+        else:
+            self.put("git", f"#!/bin/sh\necho owned > '{marker}'\n").chmod(0o755)
+        previous = os.getcwd()
+        environment = {k: v for k, v in os.environ.items() if k != "NoDefaultCurrentDirectoryInExePath"}
+        environment["PATH"] = "." + os.pathsep + environment["PATH"]
+        try:
+            os.chdir(self.root)
+            with patch.dict(os.environ, environment, clear=True):
+                try:
+                    self.tool("coding.git", {"path": "."})
+                except subprocess.CalledProcessError:
+                    pass
+        finally:
+            os.chdir(previous)
+        self.assertFalse(marker.exists())
+
+    def test_device_names_and_odd_characters_are_refused(self):
+        self.put("data.txt", "precious")
+        key = hashlib.sha256(b"precious").hexdigest()
+        for destination in ("n/NUL", "nul.txt", "CON", "sub/aux .log", "COM1", "lpt9.md", "a|b", "q?.txt", "x\ny"):
+            with self.subTest(destination=destination), self.assertRaises(PermissionError):
+                self.tool("files.move", {"source": "data.txt", "destination": destination, "expected_sha256": key})
+        self.assertEqual((self.root / "data.txt").read_bytes(), b"precious")
+        for name in ("console.py", "null.txt", "com10.log", "auxiliary/x"):
+            Workspace(self.root).path(name)
+
+    def test_git_hides_everything_the_file_tools_refuse(self):
+        subprocess.run(["git", "-C", str(self.root), "init", "-q"], check=True)
+        hidden = [".vscode/s.json", ".idea/w.xml", ".potklin/j", ".env.d/prod", "sub/.env/keys", "a/.VSCode/t"]
+        for name in hidden:
+            self.put(name, "old\n")
+        self.put("seen.txt", "old\n")
+
+        def git(*args):
+            subprocess.run(["git", "-C", str(self.root), "-c", "user.name=t", "-c", "user.email=t@example.invalid", *args],
+                           check=True, capture_output=True)
+
+        git("add", "-A", "-f")
+        git("commit", "-q", "-m", "x")
+        for name in hidden:
+            self.put(name, "SECRETVALUE\n")
+        self.put("seen.txt", "new\n")
+        result = self.tool("coding.git", {"path": "."})["result"]
+        self.assertIn("seen.txt", result["diff"])
+        self.assertNotIn("SECRETVALUE", result["diff"])
+        for name in hidden:
+            self.assertNotIn(name, result["status"] + result["diff"])
+
+    def test_allow_patterns_are_strict_and_deny_patterns_broad(self):
+        for relative, pattern in (("\u017frc/evil.py", "src"), ("stra\u00dfe.py", "strasse.py"),
+                                  ("tas\u212as/x", "tasks"), ("app/i.tsx", "app/[id].tsx")):
+            with self.subTest(relative=relative):
+                self.assertFalse(checks.matches(relative, [pattern], allow=True))
+        self.assertTrue(checks.matches("app/[id].tsx", ["app/[id].tsx"], allow=True))
+        self.assertTrue(checks.matches("src/deep/m.py", ["src/*.py"], allow=True))
+
+    def test_protection_reaches_dependency_folders_inside_protected_trees(self):
+        self.put("tests/venv/helper.py", "h")
+        self.put("tests/node_modules/m.js", "m")
+        self.put("node_modules/other.js", "o")
+        self.assertEqual(sorted(checks.fingerprint(self.root, ["tests"])), ["tests/node_modules/m.js", "tests/venv/helper.py"])
+        self.assertEqual(sorted(checks.fingerprint(self.root, ["node_modules/other.js"])), ["node_modules/other.js"])
+
+    def test_module_shadowing_from_the_workspace_is_ignored(self):
+        marker = self.root / "shadowed.txt"
+        for module in ("argparse", "sqlite3", "json"):
+            self.put(module + ".py", f"open({str(marker)!r}, 'w').write('x')\nraise SystemExit(7)\n")
+        repository = str(Path(__import__("potklin").__file__).resolve().parents[1])
+        run = subprocess.run([sys.executable, "-m", "potklin", "--version"], cwd=self.root, capture_output=True,
+                             env={**os.environ, "PYTHONPATH": repository}, timeout=60)
+        self.assertEqual((run.returncode, marker.exists()), (0, False), run.stderr)
+
+
 class FileTools(Temp):
     def test_read_exposes_hash_and_line_ranges(self):
         self.put("a.txt", "one\ntwo\nthree\n")
@@ -164,10 +243,94 @@ class CheckpointTests(Temp):
         self.write(store, "m", "a.txt", "a1")
         self.write(store, "m", "b.txt", "b1")
         self.put("b.txt", "user work")
-        self.assertEqual(store.rollback("m"), {"restored": [], "conflicts": ["b.txt"]})
+        self.assertEqual(store.rollback("m"), {"restored": [], "conflicts": ["b.txt"], "unrestored": ["a.txt", "b.txt"]})
         self.assertEqual((self.root / "a.txt").read_bytes(), b"a1")
         self.assertEqual(store.rollback("m", force=True)["restored"], ["a.txt", "b.txt"])
         self.assertEqual((self.root / "b.txt").read_bytes(), b"b0")
+
+    def test_case_only_renames_never_destroy_the_file(self):
+        self.put("Readme.md", "the only copy")
+        store = Checkpoints(self.journal.db)
+        workspace = Workspace(self.root)
+
+        def move(source, destination):
+            seqs = [(store.snapshot(workspace, "m", n), n) for n in (source, destination)]
+            (self.root / source).rename(self.root / destination)
+            for seq, name in seqs:
+                store.seal(workspace, seq, name)
+
+        move("Readme.md", "tmp.md")
+        move("tmp.md", "readme.md")
+        result = store.rollback("m")
+        self.assertEqual(result["unrestored"], [])
+        self.assertEqual([p.read_bytes() for p in self.root.iterdir()], [b"the only copy"])
+
+    def test_write_that_changed_nothing_leaves_no_checkpoint(self):
+        self.put("a.txt", "a0")
+        self.put("b.txt", "b0")
+        store = Checkpoints(self.journal.db)
+        workspace = Workspace(self.root)
+        store.seal(workspace, store.snapshot(workspace, "m", "b.txt"), "b.txt")
+        self.write(store, "m", "a.txt", "a1")
+        self.put("b.txt", "user work")
+        self.assertEqual(store.rollback("m"), {"restored": ["a.txt"], "conflicts": [], "unrestored": []})
+        self.assertEqual((self.root / "b.txt").read_bytes(), b"user work")
+
+    def test_oversized_file_can_still_be_diffed_and_rolled_back(self):
+        self.put("a.txt", "small")
+        store = Checkpoints(self.journal.db)
+        self.write(store, "m", "a.txt", "edited")
+        self.put("a.txt", "x" * 2_000_000)
+        self.assertEqual(store.paths("m"), ["a.txt"])
+        self.assertIn("too large", store.diff("m"))
+        self.assertEqual(store.rollback("m", force=True)["restored"], ["a.txt"])
+        self.assertEqual((self.root / "a.txt").read_bytes(), b"small")
+
+    def test_unrestorable_path_keeps_its_pre_image(self):
+        self.put("a.txt", "a0")
+        store = Checkpoints(self.journal.db)
+        self.write(store, "m", "a.txt", "a1")
+        (self.root / "a.txt").unlink()
+        (self.root / "a.txt").mkdir()
+        self.assertEqual(store.rollback("m", force=True)["unrestored"], ["a.txt"])
+        (self.root / "a.txt").rmdir()
+        self.assertEqual(store.rollback("m", force=True)["restored"], ["a.txt"])
+        self.assertEqual((self.root / "a.txt").read_bytes(), b"a0")
+
+    @unittest.skipIf(os.name == "nt", "POSIX permissions")
+    def test_move_and_restore_keep_permissions(self):
+        path = self.put("run.sh", "echo\n")
+        path.chmod(0o755)
+        key = hashlib.sha256(path.read_bytes()).hexdigest()
+        store = Checkpoints(self.journal.db)
+        workspace = Workspace(self.root)
+        seqs = [(store.snapshot(workspace, "m", n), n) for n in ("run.sh", "moved.sh")]
+        self.tool("files.move", {"source": "run.sh", "destination": "moved.sh", "expected_sha256": key})
+        for seq, name in seqs:
+            store.seal(workspace, seq, name)
+        self.assertEqual((self.root / "moved.sh").stat().st_mode & 0o777, 0o755)
+        store.rollback("m")
+        self.assertEqual(path.stat().st_mode & 0o777, 0o755)
+
+    def test_search_does_not_depend_on_the_suffix_and_skips_binaries(self):
+        self.put("run.sh", "needle\n")
+        self.put("blob.bin", b"needle\x00")
+        found = search(Workspace(self.root), ".", "needle")
+        self.assertEqual(([m["path"] for m in found["matches"]], found["skipped"]), (["run.sh"], 1))
+
+    def test_file_replaced_by_our_own_directory_is_restored(self):
+        self.put("notes", "the only copy")
+        store = Checkpoints(self.journal.db)
+        workspace = Workspace(self.root)
+        seqs = [(store.snapshot(workspace, "m", n), n) for n in ("notes", "y")]
+        (self.root / "notes").rename(self.root / "y")
+        for seq, name in seqs:
+            store.seal(workspace, seq, name)
+        seq = store.snapshot(workspace, "m", "notes/z")
+        self.put("notes/z", "z")
+        store.seal(workspace, seq, "notes/z")
+        self.assertEqual(store.rollback("m")["unrestored"], [])
+        self.assertEqual([(p.name, p.read_bytes()) for p in self.root.iterdir()], [("notes", b"the only copy")])
 
     def test_interrupted_write_needs_force(self):
         self.put("a.txt", "a0")
@@ -189,7 +352,11 @@ class Commands(Temp):
 
     def test_secrets_are_not_inherited(self):
         env = clean_environment({"PATH": "p", "GITHUB_TOKEN": "t", "OPENAI_API_KEY": "k", "DB_PASSWORD": "d", "GIT_DIR": "g"})
-        self.assertEqual(sorted(k for k in env if not k.startswith("PYTHON")), ["PATH"])
+        self.assertEqual(sorted(k for k in env if not k.startswith(("PYTHON", "NoDefault"))), ["PATH"])
+        leaked = {n: "x" for n in ("DB_PASS", "GITHUB_PAT", "OPENAI_KEY", "STRIPE_KEY", "SSH_PASSPHRASE")}
+        leaked["DATABASE_URL"] = "postgres://user:hunter2@localhost/db"
+        self.assertEqual([k for k in clean_environment(leaked) if k in leaked], [])
+        self.assertIn("PATHEXT", clean_environment({"PATHEXT": ".EXE"}))
         with patch.dict(os.environ, {"POTKLIN_TEST_TOKEN": "leak"}):
             out = self.commands("import os; print(os.environ.get('POTKLIN_TEST_TOKEN'))").run("probe")["output"]
         self.assertEqual(out.strip(), "None")
@@ -219,7 +386,7 @@ class Commands(Temp):
     def test_program_planted_in_workspace_is_refused(self):
         planted = self.put("planted-tool.cmd" if os.name == "nt" else "planted-tool", "@echo off\n")
         planted.chmod(0o755)
-        with patch("potklin.execution.shutil.which", return_value=str(planted)):
+        with patch.dict(os.environ, {"PATH": str(self.root)}):
             with self.assertRaises(PermissionError):
                 CommandSet(self.root, {"a": ["planted-tool"]})
 

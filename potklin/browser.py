@@ -1,5 +1,6 @@
 """Local fixture browser with real DOM interaction and no external networking."""
 from pathlib import Path
+from .browser_session import DEAD_PROXY,LAUNCH_ARGS
 
 def exercise(workspace,path,button_id,output_id):
     from playwright.sync_api import sync_playwright
@@ -11,7 +12,7 @@ def exercise(workspace,path,button_id,output_id):
     if not all(x and len(x)<=80 and x.replace("-","").replace("_","").isalnum() for x in (button_id,output_id)):
         raise ValueError("invalid element id")
     with sync_playwright() as p:
-        browser=p.chromium.launch(headless=True,args=["--disable-background-networking"])
+        browser=p.chromium.launch(headless=True,proxy=DEAD_PROXY,args=LAUNCH_ARGS)
         try:
             context=browser.new_context(accept_downloads=False,service_workers="block")
             context.route("**/*",lambda route:route.abort())

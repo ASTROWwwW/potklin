@@ -188,7 +188,7 @@ def run_one(name, variant, model, args, workdir):
     finally:
         journal.close()
     if task["oracle"] is None:
-        oracle = not result["verified"]
+        oracle = not result["verified"] and result["status"] != "failed"
     else:
         oracle = grade(task, root, workdir)
     row = {"task": name, "variant": variant, "status": result["status"], "verified": result["verified"], "oracle": oracle,

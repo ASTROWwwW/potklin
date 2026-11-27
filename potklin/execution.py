@@ -5,22 +5,24 @@ This is not a sandbox: a command that runs workspace code runs whatever the miss
 import json
 import os
 import re
-import shutil
 import signal
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from .programs import candidates
 
 NAME = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,39}")
-SECRET = re.compile(r"TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY|ACCESS_?KEY|COOKIE|AUTH", re.I)
+SECRET = re.compile(r"TOKEN|SECRET|PASS|CREDENTIAL|KEY|COOKIE|AUTH|SESSION|(^|_)PAT($|_)", re.I)
+URL_WITH_PASSWORD = re.compile(r"://[^/@\s:]*:[^/@\s]+@")
 OUTPUT_TAIL = 4000
 
 
 def clean_environment(source):
-    env = {k: v for k, v in source.items() if not SECRET.search(k) and not k.upper().startswith("GIT_")}
+    env = {k: v for k, v in source.items()
+           if not SECRET.search(k) and not URL_WITH_PASSWORD.search(v) and not k.upper().startswith("GIT_")}
     # Stale bytecode could make a test pass or fail against an older source.
-    env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8")
+    env.update(PYTHONDONTWRITEBYTECODE="1", PYTHONIOENCODING="utf-8", NoDefaultCurrentDirectoryInExePath="1")
     return env
 
 
@@ -58,10 +60,10 @@ class CommandSet:
         elif Path(program).name != program:
             raise ValueError("use a bare program name or an absolute path: " + name)
         else:
-            found = shutil.which(program)
-            # Windows searches the current directory first; a mission must not plant the program.
-            if found and Path(found).resolve().is_relative_to(self.root):
-                raise PermissionError("program resolves inside the workspace: " + program)
+            found = next(candidates(program), None)
+            # A mission could rewrite a program that lives in its workspace.
+            if found and found.resolve().is_relative_to(self.root):
+                raise PermissionError("program resolves inside the workspace; give its absolute path: " + program)
         if not found:
             raise ValueError("program not found: " + program)
         return (str(Path(found).absolute()), *argv[1:])

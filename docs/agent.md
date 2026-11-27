@@ -41,22 +41,33 @@ potklin --workspace path/to/project mission "Fix the failing test" \
 | `--allow-exec` | required with `--commands` |
 | `--command-timeout S` | per command, default 120 seconds; the whole process tree is killed |
 | `--check SPEC` | acceptance criterion (repeatable) |
-| `--rollback-on-failure` | undo the file writes unless the mission succeeds |
+| `--holdout SPEC` | criterion the model never sees, run once at the end; needs at least one `--check` (repeatable) |
+| `--rollback-on-failure` | undo the file writes on any outcome other than `verified`, `checks_passed_non_discriminating` or `model_finished_unverified`, including Ctrl+C |
 | `--steps N` | model replies allowed, 1 to 50, default 20 |
 | `--think` | let the model reason before each reply; slower |
+
+A holdout is the defence against a model that satisfies the visible test without solving the problem. Keep its
+test file outside the workspace, so the model cannot read it. A command named only by `--holdout` is hidden from the
+model and cannot be started by it:
+
+```json
+{ "test": ["python", "-m", "unittest"], "secret": ["python", "/home/me/holdout/test_edge_cases.py"] }
+```
 
 Check kinds: `exists:path`, `absent:path`, `contains:path::text`, `sha256:path::hex`, `command:name`.
 The model sees the kind and target of each check, never the expected text or hash. It does see the output of a failing command.
 
 ## Reading the result
 
-The exit code is 0 when the mission is verified, or when it finished and you gave no check; 1 otherwise; 2 on a usage or environment error.
+The exit code is 0 when the mission is verified, or when it finished and you gave no check; 1 when it did not succeed;
+2 on a usage or environment error, including the status `failed`; 130 after Ctrl+C.
 
 | `status` | Meaning |
 |---|---|
 | `verified` | every check passes, at least one was failing before the mission, and protected files are unchanged |
 | `checks_passed_non_discriminating` | every check passes, but they already did before the mission, so they prove nothing about it |
 | `verification_failed` | the model reported completion and the checks disagree |
+| `holdout_failed` | the visible checks pass and a holdout does not: do not trust the change |
 | `protected_modified` | a protected file changed; nothing is proven |
 | `model_finished_unverified` | no check was given; the answer is only the model's claim |
 | `budget_exhausted`, `repeated_action`, `invalid_action` | stopped before success |
@@ -75,9 +86,11 @@ potklin rollback <mission> --force
 potklin log <mission>
 ```
 
-The mission id is printed on standard error as soon as the mission starts, so an interrupted run can still be undone
-(`--force`, because the interrupted write was never sealed). Rollback covers the file tools only: **whatever a command
-changed is not recorded and is not undone.** Use version control for anything you cannot afford to lose.
+The mission id is printed on standard error as soon as the mission starts, so an interrupted run can still be undone.
+Try without `--force` first; it is needed when a write was cut off half-way, and it overwrites later edits. Whatever
+cannot be restored is listed under `unrestored`, its previous content stays in the journal, and the exit code is 1.
+Rollback covers the file tools only: **whatever a command changed is not recorded and is not undone.** Use version
+control for anything you cannot afford to lose.
 
 The journal lives in `~/.potklin/journal.sqlite3`. Its event log holds tool names and outcomes, not file content.
 Its checkpoint table does hold the previous content of every file a mission changed, until that mission is rolled back.
@@ -86,7 +99,8 @@ Its checkpoint table does hold the previous content of every file a mission chan
 
 Enforced by the runtime, whatever the model replies:
 
-- file tools stay inside the workspace and refuse links and junctions;
+- file tools stay inside the workspace and refuse links, junctions and Windows device names such as `NUL`;
+- `git` is never searched for in the current directory or the workspace;
 - `.git`, `.env`, `.env.*` (except `.env.example`), `.vscode`, `.idea` and `.potklin` cannot be read or written, including
   through Windows aliases such as `.git.` or `GIT~1`;
 - no shell and no model-written command line; a program name that resolves inside the workspace is refused;
@@ -105,5 +119,9 @@ Not enforced. Assume these are possible:
   model may still obey them; this happened during evaluation. Limit the damage with `--only`, `--protect`,
   `--rollback-on-failure`, and by leaving out `--allow-delete` and `--allow-exec` when the workspace is not yours.
 - Path checks are not race-proof against another process changing the workspace during a mission.
-- The browser tools restrict HTTP requests, redirects and WebSockets to the approved origins. They are not a network
-  sandbox: DNS lookups and WebRTC are not covered.
+- The browser tools give Chromium a dead proxy and perform approved requests themselves, so redirects, WebSockets,
+  workers and prefetch cannot reach another origin. This is not an OS network sandbox, and WebRTC is only restricted
+  by a Chromium setting that has not been tested here.
+- Start the agent with the `potklin` command. From a checkout, `python -P -m potklin` keeps the current directory off
+  the module path.
+- `--only` and `--protect` patterns treat `*` and `?` as wildcards, and `*` also crosses directories.

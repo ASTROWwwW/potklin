@@ -163,6 +163,83 @@ class Agent(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_agent(Script(), holdout=["exists:calc.py"])
 
+    def test_retry_after_reading_is_not_a_repeat(self):
+        model = Script(self.fix(), call("files.read", path="calc.py"), self.fix(), DONE)
+        result = self.run_agent(model, allow_write=True, checks=["command:test"])
+        self.assertTrue(result["verified"], result)
+
+    def test_rerunning_a_command_without_writing_is_a_repeat(self):
+        run = call("commands.run", name="test")
+        result = self.run_agent(Script(run, run, run, run))
+        self.assertEqual(result["status"], "repeated_action")
+        self.assertEqual(len([o for o in result["observations"] if "tool" in o]), 1)
+
+    def test_plain_report_may_start_with_markdown(self):
+        for report in ("`calc.py` is fine.", "[done] nothing to change", "<b>done</b>"):
+            result = self.run_agent(Script(report))
+            self.assertEqual((result["status"], result["answer"]), ("model_finished_unverified", report))
+
+    def test_long_replies_stay_inside_the_context_budget(self):
+        (self.root / "big.txt").write_text("y" * 9000, encoding="utf-8")
+
+        class Chatty(Script):
+            def chat(self, messages, tools=None, **kw):
+                self.prompts.append(messages)
+                n = len(self.prompts)
+                if n > 12:
+                    return {"message": {"content": "done"}}
+                return {"message": {"content": "z" * 20000, "tool_calls": [{"function": {
+                    "name": "files.read_lines", "arguments": {"path": "big.txt", "start": "1", "count": str(n)}}}]}}
+
+        model = Chatty()
+        registry = build_registry(self.root)
+        MissionRunner(registry, self.journal, model, Workspace(self.root), context_budget=12000).run("read", {"filesystem"}, 14)
+        self.assertLess(max(sum(len(m["content"]) for m in p) for p in model.prompts), 16000)
+
+    def test_one_mistyped_protect_pattern_is_an_error(self):
+        with self.assertRaises(ValueError):
+            self.run_agent(Script(), protect=["calc.py", "tsets"])
+
+    def test_dot_slash_patterns_work(self):
+        model = Script(call("files.read", path="calc.py"), self.fix(), DONE)
+        result = self.run_agent(model, allow_write=True, only=["./calc.py"], protect=["./tests"])
+        self.assertEqual(result["changes"], ["calc.py"])
+
+    def test_interrupt_rolls_back_when_asked(self):
+        class Interrupted(Script):
+            def chat(self, messages, tools=None, **kw):
+                if not self.replies:
+                    raise KeyboardInterrupt
+                return super().chat(messages, tools=tools, **kw)
+
+        model = Interrupted(call("files.read", path="calc.py"), self.fix())
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_agent(model, allow_write=True, rollback_on_failure=True)
+        self.assertIn("a - b", self.source())
+        self.assertEqual(self.journal.events()[-1]["kind"], "mission_interrupted")
+
+    def test_file_grown_by_a_command_does_not_crash_the_mission(self):
+        grow = "open('calc.py','w').write('x' * 2000000)"
+        self.commands = CommandSet(self.root, {"test": [sys.executable, "-c", grow]})
+        model = Script(call("files.read", path="calc.py"), self.fix(), call("commands.run", name="test"), DONE)
+        result = self.run_agent(model, allow_write=True)
+        self.assertEqual((result["status"], result["error"]), ("model_finished_unverified", None))
+        self.assertEqual(self.journal.events()[-1]["kind"], "mission_finished")
+
+    def test_case_only_renames_roll_back_without_loss(self):
+        model = Script(call("files.read", path="calc.py"), call("files.move", source="calc.py", destination="t.py"),
+                       call("files.move", source="t.py", destination="CALC.py"), DONE, DONE)
+        self.run_agent(model, allow_write=True, checks=["exists:never"], rollback_on_failure=True)
+        self.assertEqual({p.name.lower(): p.read_bytes() for p in self.root.glob("*.[pP][yY]")},
+                         {"calc.py": b"def add(a, b):\n    return a - b\n"})
+
+    def test_failed_move_does_not_block_rollback(self):
+        model = Script(call("files.read", path="calc.py"), self.fix(), call("files.move", source="calc.py", destination="tests"),
+                       call("files.create", path="calc.py", text="x"), DONE, DONE)
+        result = self.run_agent(model, allow_write=True, checks=["exists:never"], rollback_on_failure=True)
+        self.assertEqual((result["rollback"]["conflicts"], result["rollback"]["restored"]), ([], ["calc.py"]))
+        self.assertIn("a - b", self.source())
+
     def test_protected_file_cannot_be_edited(self):
         model = Script(call("files.read", path="tests/check.py"),
                        call("files.replace", path="./tests/check.py", old="== 5", new="== -1"), DONE, DONE)

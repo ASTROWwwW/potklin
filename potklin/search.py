@@ -21,11 +21,11 @@ def search(workspace,path,query):
             visited+=1
             if visited>2000 or scanned>=200 or len(matches)>=100:
                 return result(True)
-            if Path(name).suffix.lower() not in {".py",".txt",".md",".json",".html",".csv",".js",".ts",".lua",".c",".cpp",".h",".toml",".yaml",".yml",".css"}:
-                continue
             rel=str(Path(base,name).relative_to(workspace.root))
             try:
                 body=workspace.load(rel).decode("utf-8")
+                if "\x00" in body:
+                    raise ValueError("binary file")
             except (OSError,ValueError,UnicodeError,PermissionError):
                 skipped+=1
                 continue

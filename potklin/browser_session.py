@@ -1,8 +1,40 @@
 """User-scoped browser navigation. Model output cannot expand the origin set."""
+import urllib.error
+import urllib.request
 from urllib.parse import urljoin, urlsplit
 from dataclasses import dataclass
 
 MAX_REDIRECTS=5
+MAX_BODY=5_000_000
+# Nothing listens here. Chromium sends every request it makes on its own to this proxy, so whatever
+# route() does not see (workers, prefetch, preconnect) fails instead of reaching the network.
+DEAD_PROXY={"server":"http://127.0.0.1:9","bypass":"<-loopback>"}
+LAUNCH_ARGS=["--disable-background-networking","--force-webrtc-ip-handling-policy=disable_non_proxied_udp"]
+FORWARDED={"accept","accept-language","user-agent","cookie","referer"}
+
+class _NoFollow(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self,*args,**kwargs):
+        return None
+
+def fetch(url,method,headers):
+    """One approved request, without proxy or redirect, performed outside the browser."""
+    kept={k:v for k,v in headers.items() if k.lower() in FORWARDED}
+    kept["Accept-Encoding"]="identity"
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),_NoFollow())
+    try:
+        response=opener.open(urllib.request.Request(url,method=method,headers=kept),timeout=10)
+    except urllib.error.HTTPError as error:
+        response=error
+    with response:
+        body=response.read(MAX_BODY+1)
+        if len(body)>MAX_BODY:
+            raise ValueError("response too large")
+        answer={}
+        for name,value in response.headers.items():
+            if name.lower() not in {"content-length","transfer-encoding","connection","content-encoding"}:
+                key=name.lower()
+                answer[key]=answer[key]+"\n"+value if key=="set-cookie" and key in answer else value
+        return response.status,answer,body
 
 def origin(url):
     if not isinstance(url,str) or "\\" in url or any(ord(x)<32 or ord(x)==127 for x in url):
@@ -36,7 +68,7 @@ class BrowserSession:
         from playwright.sync_api import sync_playwright
         self.p=sync_playwright().start()
         try:
-            self.browser=self.p.chromium.launch(headless=True,args=["--disable-background-networking"])
+            self.browser=self.p.chromium.launch(headless=True,proxy=DEAD_PROXY,args=LAUNCH_ARGS)
             self.ctx=self.browser.new_context(accept_downloads=False,service_workers="block")
             self.redirect=None
             self.page=None
@@ -58,24 +90,23 @@ class BrowserSession:
     def _route(self,route):
         # Playwright does not call a route handler again for a redirect target, so the
         # browser must never follow one: fetch without redirects and re-check each hop.
-        from playwright.sync_api import Error
         request=route.request
         if not self.scope.allows(request.url) or request.method not in {"GET","HEAD"}:
             route.abort()
             return
         try:
-            response=route.fetch(max_redirects=0,timeout=10000)
-        except Error:
+            status,headers,body=fetch(request.url,request.method,request.headers)
+        except (OSError,ValueError):
             route.abort()
             return
-        location=response.headers.get("location")
-        if 300<=response.status<400 and location:
+        location=headers.get("location")
+        if 300<=status<400 and location:
             if self.page and request.is_navigation_request() and request.frame==self.page.main_frame:
                 self.redirect=urljoin(request.url,location)
             # "aborted" avoids an error page that would interrupt the next navigation.
             route.abort("aborted")
             return
-        route.fulfill(response=response)
+        route.fulfill(status=status,headers=headers,body=body)
     def navigate(self,url):
         from playwright.sync_api import Error
         for _ in range(MAX_REDIRECTS+1):

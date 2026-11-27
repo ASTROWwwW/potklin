@@ -20,6 +20,8 @@ from .gitmod import inspect as inspect_git
 # Writing there can run code outside the mission (git hooks, editor tasks) or alter agent state.
 PROTECTED_NAMES = {".git", ".potklin", ".vscode", ".idea"}
 READ_LIMIT = 65536
+# Windows opens these as devices wherever they appear, with or without an extension.
+DEVICE_NAME = re.compile(r"(?i)con|prn|aux|nul|conin\$|conout\$|clock\$|(com|lpt)[0-9\u00b9\u00b2\u00b3]")
 
 
 def is_protected_name(part):
@@ -39,6 +41,8 @@ class Workspace:
             raise PermissionError("unsafe workspace path")
         # Windows silently strips trailing dots and spaces, so ".git." opens ".git".
         if any(part != part.rstrip(" .") for part in relative.parts):
+            raise PermissionError("unsafe workspace path")
+        if any(ord(c) < 32 or c in '<>"|?*' for c in name) or any(DEVICE_NAME.fullmatch(part.split(".")[0].rstrip(" ")) for part in relative.parts):
             raise PermissionError("unsafe workspace path")
         p = self.root / relative
         resolved = p.resolve()

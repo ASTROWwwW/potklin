@@ -17,7 +17,7 @@ class RepairRemote(unittest.TestCase):
         with self.assertRaises(PermissionError):
             create_pr("owner/repo","feature","main","title","body")
     def test_remote_args(self):
-        with patch("potklin.github_actions.shutil.which",return_value="gh"),patch("potklin.github_actions.subprocess.run") as run:
+        with patch("potklin.github_actions.find_program",return_value="gh"),patch("potklin.github_actions.subprocess.run") as run:
             run.return_value.stdout="https://github.com/owner/repo/pull/1"
             result=create_pr("owner/repo","feature","main","title","body",True)
             self.assertFalse(result["verified"])
