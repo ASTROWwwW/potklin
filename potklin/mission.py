@@ -120,6 +120,14 @@ class _Run:
         self.passing = []
 
     def execute(self, max_steps, think, rollback_on_failure):
+        try:
+            return self.attempt(max_steps, think, rollback_on_failure)
+        except KeyboardInterrupt:
+            outcome = self.checkpoints.rollback(self.mission) if rollback_on_failure and self.checkpoints.known(self.mission) else None
+            self.runner.journal.append(self.mission, "mission_interrupted", {"rollback": outcome})
+            raise
+
+    def attempt(self, max_steps, think, rollback_on_failure):
         start = time.monotonic()
         journal = self.runner.journal
         journal.append(self.mission, "mission_started", {"mods": sorted(self.mods), "max_steps": max_steps,
@@ -134,10 +142,6 @@ class _Run:
                 if status_after:
                     status = status_after
                     break
-        except KeyboardInterrupt:
-            outcome = self.checkpoints.rollback(self.mission) if rollback_on_failure and self.checkpoints.known(self.mission) else None
-            journal.append(self.mission, "mission_interrupted", {"rollback": outcome})
-            raise
         except Exception as e:
             status, error = "failed", short(f"{type(e).__name__}: {e}", 500)
             journal.append(self.mission, "mission_error", {"type": type(e).__name__})

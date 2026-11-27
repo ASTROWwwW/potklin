@@ -233,6 +233,33 @@ class Agent(unittest.TestCase):
         self.assertEqual({p.name.lower(): p.read_bytes() for p in self.root.glob("*.[pP][yY]")},
                          {"calc.py": b"def add(a, b):\n    return a - b\n"})
 
+    def test_case_collision_does_not_block_automatic_rollback(self):
+        (self.root / "other.py").write_bytes(b"KEEP\n")
+        model = Script(call("files.read", path="calc.py"), call("files.move", source="calc.py", destination="t.py"),
+                       call("files.create", path="CALC.py", text="EVIL"), call("files.read", path="other.py"),
+                       call("files.write", path="other.py", text="EVIL"), DONE, DONE)
+        result = self.run_agent(model, allow_write=True, checks=["exists:never"], rollback_on_failure=True)
+        self.assertEqual((result["rollback"]["conflicts"], result["rollback"]["unrestored"]), ([], []))
+        self.assertEqual(sorted(p.name for p in self.root.glob("*.py")), ["calc.py", "other.py"])
+        self.assertIn("a - b", self.source())
+        self.assertEqual((self.root / "other.py").read_bytes(), b"KEEP\n")
+
+    def test_interrupt_during_the_final_checks_still_rolls_back(self):
+        from unittest.mock import patch
+        from potklin import checks as acceptance
+        original, calls = acceptance.evaluate, []
+
+        def evaluate(*args):
+            calls.append(1)
+            if len(calls) == 2:
+                raise KeyboardInterrupt
+            return original(*args)
+
+        model = Script(call("files.read", path="calc.py"), self.fix(), DONE)
+        with patch.object(acceptance, "evaluate", evaluate), self.assertRaises(KeyboardInterrupt):
+            self.run_agent(model, steps=3, allow_write=True, checks=["command:test"], rollback_on_failure=True)
+        self.assertIn("a - b", self.source())
+
     def test_failed_move_does_not_block_rollback(self):
         model = Script(call("files.read", path="calc.py"), self.fix(), call("files.move", source="calc.py", destination="tests"),
                        call("files.create", path="calc.py", text="x"), DONE, DONE)

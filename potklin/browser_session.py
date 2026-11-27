@@ -1,4 +1,6 @@
 """User-scoped browser navigation. Model output cannot expand the origin set."""
+import http.client
+import time
 import urllib.error
 import urllib.request
 from urllib.parse import urljoin, urlsplit
@@ -6,6 +8,8 @@ from dataclasses import dataclass
 
 MAX_REDIRECTS=5
 MAX_BODY=5_000_000
+# The socket timeout applies to each read; a trickling response needs a limit on the whole transfer.
+FETCH_DEADLINE=15
 # Nothing listens here. Chromium sends every request it makes on its own to this proxy, so whatever
 # route() does not see (workers, prefetch, preconnect) fails instead of reaching the network.
 DEAD_PROXY={"server":"http://127.0.0.1:9","bypass":"<-loopback>"}
@@ -21,14 +25,25 @@ def fetch(url,method,headers):
     kept={k:v for k,v in headers.items() if k.lower() in FORWARDED}
     kept["Accept-Encoding"]="identity"
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}),_NoFollow())
+    deadline=time.monotonic()+FETCH_DEADLINE
     try:
-        response=opener.open(urllib.request.Request(url,method=method,headers=kept),timeout=10)
+        response=opener.open(urllib.request.Request(url,method=method,headers=kept),timeout=5)
     except urllib.error.HTTPError as error:
         response=error
     with response:
-        body=response.read(MAX_BODY+1)
-        if len(body)>MAX_BODY:
-            raise ValueError("response too large")
+        chunks=[]
+        size=0
+        while chunk:=response.read1(65536):
+            size+=len(chunk)
+            if size>MAX_BODY:
+                raise ValueError("response too large")
+            if time.monotonic()>deadline:
+                raise ValueError("response too slow")
+            chunks.append(chunk)
+        # read1 reports a connection closed early as a normal end, so compare with the announced length.
+        if method!="HEAD" and getattr(response,"length",None):
+            raise ValueError("response cut off")
+        body=b"".join(chunks)
         answer={}
         for name,value in response.headers.items():
             if name.lower() not in {"content-length","transfer-encoding","connection","content-encoding"}:
@@ -96,7 +111,7 @@ class BrowserSession:
             return
         try:
             status,headers,body=fetch(request.url,request.method,request.headers)
-        except (OSError,ValueError):
+        except (OSError,ValueError,http.client.HTTPException):
             route.abort()
             return
         location=headers.get("location")

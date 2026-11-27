@@ -93,6 +93,14 @@ def matches(relative, patterns, allow=False):
                for p in (normalize(pattern, allow) for pattern in patterns))
 
 
+def reaches(pattern, below):
+    """Can the pattern match something under the directory prefix `below`?"""
+    literal = pattern.split("*", 1)[0].split("?", 1)[0]
+    if literal == pattern:
+        return pattern.startswith(below)
+    return below.startswith(literal) or literal.startswith(below)
+
+
 def fingerprint(root, patterns):
     """Hash every protected file, so changes made by a command are detected too."""
     found = {}
@@ -105,7 +113,8 @@ def fingerprint(root, patterns):
         if name not in HEAVY_DIRS:
             return True
         relative = Path(base, name).relative_to(root).as_posix()
-        return matches(relative, patterns) or any(normalize(p).startswith(normalize(relative) + "/") for p in patterns)
+        below = normalize(relative) + "/"
+        return matches(relative, patterns) or any(reaches(normalize(p), below) for p in patterns)
 
     for base, dirs, names in os.walk(root, followlinks=False):
         dirs[:] = [d for d in dirs if worth_walking(base, d)]

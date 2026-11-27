@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import stat
+from pathlib import Path
 from .edits import MAX_FILE, digest, write_atomic
 from .mods import Workspace
 
@@ -32,6 +33,8 @@ class Checkpoints:
     def __init__(self, db):
         self.db = db
         db.execute("CREATE TABLE IF NOT EXISTS checkpoints (seq INTEGER PRIMARY KEY, mission TEXT, root TEXT, path TEXT, before BLOB, mode INTEGER, new_dirs TEXT, after TEXT, done INTEGER)")
+        if "mode" not in {row[1] for row in db.execute("PRAGMA table_info(checkpoints)")}:
+            db.execute("ALTER TABLE checkpoints ADD COLUMN mode INTEGER")
         db.commit()
 
     def snapshot(self, workspace, mission, path):
@@ -95,8 +98,10 @@ class Checkpoints:
         workspace = Workspace(rows[0][0])
         items, new_dirs = {}, set()
         for _, path, before, mode, dirs, after, done in rows:
-            item = items.setdefault(path, {"path": path, "before": before, "mode": mode,
-                                           "original": None if before is None else digest(before)})
+            # Where the disk ignores case, two spellings are one file: its first record holds the original.
+            item = items.setdefault(os.path.normcase(path), {"path": path, "paths": set(), "before": before, "mode": mode,
+                                                             "original": None if before is None else digest(before)})
+            item["paths"].add(path)
             item["after"], item["done"] = after, done
             new_dirs.update(json.loads(dirs))
         for item in items.values():
@@ -108,13 +113,13 @@ class Checkpoints:
         workspace, items, new_dirs = self._pending(mission)
         if workspace is None:
             raise ValueError("no checkpoint for this mission")
-        created = {i["path"] for i in items if i["before"] is None}
+        created = {os.path.normcase(i["path"]) for i in items if i["before"] is None}
 
         def ours(item):
             """A directory the mission made, holding nothing but files the mission made."""
             if item["current"] != "directory" or item["path"] not in new_dirs:
                 return False
-            return all(f.is_dir() or f.relative_to(workspace.root).as_posix() in created
+            return all(f.is_dir() or os.path.normcase(f.relative_to(workspace.root).as_posix()) in created
                        for f in (workspace.root / item["path"]).rglob("*"))
 
         def prune():
@@ -140,7 +145,11 @@ class Checkpoints:
                     if not ours(item):
                         unrestored.add(item["path"])
                     continue
-                workspace.path(item["path"]).unlink(missing_ok=True)
+                try:
+                    workspace.path(item["path"]).unlink(missing_ok=True)
+                except OSError:
+                    unrestored.add(item["path"])
+                    continue
                 restored.add(item["path"])
         # A directory we created may sit where an old file has to come back.
         prune()
@@ -148,21 +157,29 @@ class Checkpoints:
             if item["before"] is None:
                 continue
             now = state(workspace, item["path"])
-            if now == item["original"]:
-                continue
             if now in UNRESTORABLE:
                 unrestored.add(item["path"])
                 continue
-            target = workspace.path(item["path"])
-            target.parent.mkdir(parents=True, exist_ok=True)
-            write_atomic(target, item["before"])
-            if item["mode"] is not None:
-                os.chmod(target, item["mode"])
-            restored.add(item["path"])
+            try:
+                if now != item["original"]:
+                    target = workspace.path(item["path"])
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    write_atomic(target, item["before"])
+                    if item["mode"] is not None:
+                        os.chmod(target, item["mode"])
+                    restored.add(item["path"])
+                # Give back the original spelling after a case-only rename.
+                actual, wanted = workspace.path(item["path"]), Path(item["path"]).name
+                if actual.name != wanted:
+                    actual.rename(actual.with_name(wanted))
+                    restored.add(item["path"])
+            except OSError:
+                unrestored.add(item["path"])
         prune()
         # Keep the pre-images of whatever could not be restored: they may be the only copy.
         for item in items:
             if item["path"] not in unrestored:
-                self.db.execute("DELETE FROM checkpoints WHERE mission=? AND path=?", (mission, item["path"]))
+                self.db.executemany("DELETE FROM checkpoints WHERE mission=? AND path=?",
+                                    [(mission, path) for path in item["paths"]])
         self.db.commit()
         return {"restored": sorted(restored), "conflicts": conflicts, "unrestored": sorted(unrestored)}

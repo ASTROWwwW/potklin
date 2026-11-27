@@ -1,5 +1,6 @@
 """Explicit filesystem actions in a trusted workspace, no implicit overwrite."""
-import shutil
+import os
+import stat
 from .edits import MAX_FILE, digest
 
 
@@ -29,7 +30,7 @@ def move(workspace, source, destination, expected_sha256):
     # Never remove the source before the bytes are proven to be at the destination.
     if not b.is_file() or b.read_bytes() != raw:
         raise ValueError("destination did not receive the content")
-    shutil.copymode(a, b)
+    mode = stat.S_IMODE(a.stat().st_mode)
     if digest(a.read_bytes()) != expected_sha256:
         b.unlink()
         raise ValueError("source changed")
@@ -38,6 +39,7 @@ def move(workspace, source, destination, expected_sha256):
     except OSError:
         b.unlink()
         raise
+    os.chmod(b, mode)
     return {"source": source, "destination": destination, "sha256": expected_sha256}
 
 

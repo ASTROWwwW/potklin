@@ -148,6 +148,97 @@ class RedTeam(Temp):
         self.assertEqual((run.returncode, marker.exists()), (0, False), run.stderr)
 
 
+class SecondPass(Temp):
+    def test_read_only_files_leave_no_debris_and_do_not_block_rollback(self):
+        locked = self.put("vendor.txt", "v")
+        self.put("app.py", "good")
+        locked.chmod(0o444)
+        key = hashlib.sha256(b"v").hexdigest()
+        store = Checkpoints(self.journal.db)
+        workspace = Workspace(self.root)
+        try:
+            for name, args in (("files.move", {"source": "vendor.txt", "destination": "copy.txt", "expected_sha256": key}),
+                               ("files.write", {"path": "vendor.txt", "expected_sha256": key, "text": "model text"})):
+                seqs = [(store.snapshot(workspace, "m", args[a]), args[a]) for a in ("source", "destination", "path") if a in args]
+                try:
+                    self.tool(name, args)
+                except OSError:
+                    pass
+                for seq, path in seqs:
+                    store.seal(workspace, seq, path)
+            self.write_file(store, "app.py", "EVIL")
+            result = store.rollback("m", force=True)
+            self.assertEqual((self.root / "app.py").read_bytes(), b"good")
+            self.assertEqual((self.root / "vendor.txt").read_bytes(), b"v")
+            self.assertEqual([p.name for p in self.root.glob(".potklin-*")], [])
+            self.assertIsInstance(result["unrestored"], list)
+        finally:
+            for file in self.root.iterdir():
+                file.chmod(0o644)
+
+    def write_file(self, store, name, text):
+        workspace = Workspace(self.root)
+        seq = store.snapshot(workspace, "m", name)
+        self.put(name, text)
+        store.seal(workspace, seq, name)
+
+    def test_old_journal_gains_the_new_column(self):
+        self.journal.db.execute("CREATE TABLE checkpoints (seq INTEGER PRIMARY KEY, mission TEXT, root TEXT, path TEXT, before BLOB, new_dirs TEXT, after TEXT, done INTEGER)")
+        self.put("a.txt", "a0")
+        store = Checkpoints(self.journal.db)
+        self.write_file(store, "a.txt", "a1")
+        self.assertEqual(store.rollback("m")["restored"], ["a.txt"])
+
+    def test_globs_reaching_dependency_folders_are_fingerprinted(self):
+        self.put("tests/node_modules/helper.js", "h")
+        self.put("tests/a.js", "a")
+        self.put("node_modules/x.js", "x")
+        self.assertEqual(sorted(checks.fingerprint(self.root, ["tests/*.js"])), ["tests/a.js", "tests/node_modules/helper.js"])
+
+
+class SlowAndBrokenResponses(unittest.TestCase):
+    def serve(self, reply):
+        import socket
+        import threading
+        listener = socket.create_server(("127.0.0.1", 0))
+
+        def run():
+            client, _ = listener.accept()
+            with client:
+                client.recv(4096)
+                try:
+                    reply(client)
+                except OSError:
+                    pass
+
+        threading.Thread(target=run, daemon=True).start()
+        self.addCleanup(listener.close)
+        return f"http://127.0.0.1:{listener.getsockname()[1]}/"
+
+    def test_endless_stream_hits_the_total_deadline(self):
+        import time
+        from potklin import browser_session
+
+        def trickle(client):
+            client.sendall(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n")
+            for _ in range(100):
+                client.sendall(b"data: x\n\n")
+                time.sleep(0.1)
+
+        url = self.serve(trickle)
+        with patch.object(browser_session, "FETCH_DEADLINE", 1), self.assertRaisesRegex(ValueError, "too slow"):
+            browser_session.fetch(url, "GET", {})
+
+    def test_malformed_replies_raise_handled_errors(self):
+        import http.client
+        from potklin.browser_session import fetch
+        for payload in (b"NOT-HTTP\r\n\r\n", b"HTTP/1.1 200 OK\r\nContent-Length: 50\r\n\r\nshort",
+                        b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n10\r\nabc"):
+            url = self.serve(lambda client, data=payload: client.sendall(data))
+            with self.subTest(payload=payload[:20]), self.assertRaises((OSError, ValueError, http.client.HTTPException)):
+                fetch(url, "GET", {})
+
+
 class FileTools(Temp):
     def test_read_exposes_hash_and_line_ranges(self):
         self.put("a.txt", "one\ntwo\nthree\n")

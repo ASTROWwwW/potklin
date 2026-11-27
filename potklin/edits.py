@@ -1,7 +1,7 @@
 """Explicit, compare-and-swap text edits in a trusted local workspace."""
 import hashlib
 import os
-import shutil
+import stat
 import tempfile
 
 MAX_FILE = 1_048_576
@@ -19,11 +19,13 @@ def write_atomic(target, data, expected_sha256=None):
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
-        if target.exists():
-            shutil.copymode(target, name)
+        mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
         if expected_sha256 is not None and digest(target.read_bytes()) != expected_sha256:
             raise ValueError("stale revision")
         os.replace(name, target)
+        # Applied last: a read-only temporary file could be neither renamed over nor removed on Windows.
+        if mode is not None:
+            os.chmod(target, mode)
     finally:
         if os.path.exists(name):
             os.unlink(name)
