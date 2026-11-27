@@ -162,7 +162,7 @@ class SecondPass(Temp):
                 seqs = [(store.snapshot(workspace, "m", args[a]), args[a]) for a in ("source", "destination", "path") if a in args]
                 try:
                     self.tool(name, args)
-                except OSError:
+                except (OSError, ValueError):
                     pass
                 for seq, path in seqs:
                     store.seal(workspace, seq, path)
