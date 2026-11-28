@@ -1,7 +1,16 @@
 """Local-only model adapter. Model output is data, never executable code."""
 import json
+import re
 import urllib.error
 import urllib.request
+
+# Ollama answers HTTP 500 when it cannot parse a tool call the model wrote.
+UNPARSEABLE = re.compile(r"(?i)xml syntax|tool.?call|pars(e|ing)")
+
+
+class ModelReplyError(RuntimeError):
+    """The server is fine; this one reply of the model was malformed."""
+
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -24,7 +33,8 @@ class Ollama:
                 return json.load(response)
         except urllib.error.HTTPError as error:
             detail = error.read(300).decode("utf-8", errors="replace")
-            raise RuntimeError(f"Ollama returned HTTP {error.code}: {detail}") from error
+            kind = ModelReplyError if path == "/api/chat" and error.code == 500 and UNPARSEABLE.search(detail) else RuntimeError
+            raise kind(f"Ollama returned HTTP {error.code}: {detail}") from error
         except urllib.error.URLError as error:
             raise RuntimeError(f"Ollama unreachable on 127.0.0.1:11434 ({error.reason}); start it with 'ollama serve'") from error
 

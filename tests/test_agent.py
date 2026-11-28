@@ -316,6 +316,35 @@ class Agent(unittest.TestCase):
         self.assertEqual((result["status"], result["verified"]), ("failed", False))
         self.assertIn("Ollama unreachable", result["error"])
 
+    def test_unparseable_tool_call_is_retried_not_fatal(self):
+        from potklin.ollama import ModelReplyError
+
+        class Garbled(Script):
+            def chat(self, messages, tools=None, **kw):
+                if self.replies and self.replies[0] == "garbled":
+                    self.replies.pop(0)
+                    raise ModelReplyError("XML syntax error on line 10: unexpected EOF")
+                return super().chat(messages, tools=tools, **kw)
+
+        model = Garbled("garbled", call("files.read", path="calc.py"), "garbled", self.fix(), DONE)
+        result = self.run_agent(model, allow_write=True, checks=["command:test"])
+        self.assertTrue(result["verified"], result)
+        stuck = self.run_agent(Garbled("garbled", "garbled", "garbled"))
+        self.assertEqual((stuck["status"], stuck["error"]), ("invalid_action", None))
+
+    def test_only_a_parse_failure_counts_as_a_bad_reply(self):
+        import io
+        import urllib.error
+        from unittest.mock import patch
+        from potklin.ollama import ModelReplyError, Ollama
+        for code, body, expected in ((500, b'{"error":"XML syntax error on line 10: unexpected EOF"}', True),
+                                     (500, b'{"error":"model requires more system memory"}', False),
+                                     (404, b'{"error":"model not found"}', False)):
+            failure = urllib.error.HTTPError("u", code, "m", {}, io.BytesIO(body))
+            with patch("urllib.request.OpenerDirector.open", side_effect=failure), self.assertRaises(RuntimeError) as raised:
+                Ollama("m").chat([])
+            self.assertEqual(isinstance(raised.exception, ModelReplyError), expected, body)
+
     def test_rollback_on_failure(self):
         model = Script(call("files.read", path="calc.py"), self.fix(new="a * b"), call("files.create", path="x/y.txt", text="y"), DONE, DONE)
         result = self.run_agent(model, allow_write=True, checks=["command:test"], rollback_on_failure=True)

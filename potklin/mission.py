@@ -8,6 +8,7 @@ from . import checks as acceptance
 from .checkpoint import Checkpoints
 from .context_policy import pack
 from .core import Executor, check_arguments
+from .ollama import ModelReplyError
 
 MAX_STEPS = 50
 MAX_STRIKES = 3
@@ -202,8 +203,12 @@ class _Run:
 
     def step(self, think):
         """One model reply. Returns (final status or None, answer or None)."""
-        reply = self.runner.model.chat(self.messages(), think=think, tools=self.schemas(),
-                                       tokens=8192 if think else 4096 if "files.create" in self.allowed else 1024)
+        try:
+            reply = self.runner.model.chat(self.messages(), think=think, tools=self.schemas(),
+                                           tokens=8192 if think else 4096 if "files.create" in self.allowed else 1024)
+        except ModelReplyError:
+            return self.strike({"role": "assistant", "content": ""}, "invalid_action",
+                               "your tool call could not be parsed; send one well-formed call, with a smaller change"), None
         message = reply["message"]
         content = message.get("content") or ""
         calls = message.get("tool_calls") or []

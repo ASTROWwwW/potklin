@@ -1,2 +1,2 @@
-"""Local-first Potklin prototype."""
-__version__ = "0.5.0"
+"""Local-first Potklin agent."""
+__version__ = "1.0.0rc1"
