@@ -124,4 +124,6 @@ Not enforced. Assume these are possible:
   by a Chromium setting that has not been tested here.
 - Start the agent with the `potklin` command. From a checkout, `python -P -m potklin` keeps the current directory off
   the module path.
+- A browser request that exceeds its time limit is abandoned, but its background thread can linger until the server
+  stops sending or the process ends.
 - `--only` and `--protect` patterns treat `*` and `?` as wildcards, and `*` also crosses directories.

@@ -119,6 +119,7 @@ class _Run:
         self.strikes = 0
         self.failed_finish = None
         self.passing = []
+        self.reply_error = None
 
     def execute(self, max_steps, think, rollback_on_failure):
         try:
@@ -146,6 +147,9 @@ class _Run:
         except Exception as e:
             status, error = "failed", short(f"{type(e).__name__}: {e}", 500)
             journal.append(self.mission, "mission_error", {"type": type(e).__name__})
+        if status == "invalid_action":
+            # If the server's complaint is what ended the mission, show it.
+            error = self.reply_error
         verified, held = False, []
         try:
             # The last successful finish already evaluated this exact state.
@@ -206,9 +210,11 @@ class _Run:
         try:
             reply = self.runner.model.chat(self.messages(), think=think, tools=self.schemas(),
                                            tokens=8192 if think else 4096 if "files.create" in self.allowed else 1024)
-        except ModelReplyError:
+        except ModelReplyError as error:
+            self.reply_error = short(str(error), 500)
             return self.strike({"role": "assistant", "content": ""}, "invalid_action",
                                "your tool call could not be parsed; send one well-formed call, with a smaller change"), None
+        self.reply_error = None
         message = reply["message"]
         content = message.get("content") or ""
         calls = message.get("tool_calls") or []

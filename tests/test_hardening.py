@@ -219,6 +219,35 @@ class ThirdPass(Temp):
         self.assertEqual(store.rollback("m"), {"restored": ["NOTES/z", "notes", "y"], "conflicts": [], "unrestored": []})
         self.assertEqual([(p.name, p.read_bytes()) for p in self.root.iterdir()], [("notes", b"original")])
 
+    def recased_history(self, lower, upper):
+        """A command renames the file to another case between two writes of the mission."""
+        self.put(lower, "original")
+        store = Checkpoints(self.journal.db)
+        self.create(store, lower, "mission 1")
+        (self.root / lower).rename(self.root / upper)
+        self.create(store, upper, "mission 2")
+        self.create(store, upper, "mission 1")
+        return store
+
+    @unittest.skipUnless(os.name == "nt", "case-insensitive disk")
+    def test_accented_names_in_two_cases_are_one_file(self):
+        store = self.recased_history("\u00e9.cfg", "\u00c9.cfg")
+        self.assertEqual(store.rollback("m")["unrestored"], [])
+        self.assertEqual([p.read_bytes() for p in self.root.iterdir()], [b"original"])
+
+    @unittest.skipUnless(os.name == "nt", "case-insensitive disk")
+    def test_original_survives_even_if_aliases_are_not_merged(self):
+        from potklin import checkpoint
+        for force in (False, True):
+            with self.subTest(force=force):
+                for file in self.root.iterdir():
+                    file.unlink()
+                self.journal.db.execute("DROP TABLE IF EXISTS checkpoints")
+                store = self.recased_history("a.cfg", "A.cfg")
+                with patch.object(checkpoint, "same_file_key", lambda path: path):
+                    store.rollback("m", force=force)
+                self.assertEqual([p.read_bytes() for p in self.root.iterdir()], [b"original"])
+
     def test_distinct_non_ascii_names_are_never_merged(self):
         lower, upper = "\U00010428.cfg", "\U00010400.cfg"
         self.put(lower, "user")

@@ -5,7 +5,8 @@ import urllib.error
 import urllib.request
 
 # Ollama answers HTTP 500 when it cannot parse a tool call the model wrote.
-UNPARSEABLE = re.compile(r"(?i)xml syntax|tool.?call|pars(e|ing)")
+# Deliberately narrow: other 500s, such as a model that fails to load, must stay visible failures.
+UNPARSEABLE = re.compile(r"(?i)xml syntax error|tool.?call pars")
 
 
 class ModelReplyError(RuntimeError):

@@ -31,9 +31,13 @@ UNRESTORABLE = {"directory", "unreadable"}
 
 
 def same_file_key(path):
-    """Equal for two spellings the disk treats as one file. Only ASCII is folded: merging two files
-    the disk keeps apart would drop a pre-image, while missing a merge only makes rollback refuse."""
-    return normalize(path, allow=True)
+    """Equal for two spellings the disk treats as one file.
+
+    NTFS ignores case within the Basic Multilingual Plane, accents included, but keeps apart the pairs
+    beyond it that Python would fold. A missed alias is survivable: see the restore order in rollback.
+    """
+    value = normalize(path, allow=True)
+    return "".join(os.path.normcase(c) if ord(c) < 0x10000 else c for c in value)
 
 
 class Checkpoints:
@@ -161,7 +165,9 @@ class Checkpoints:
                 restored.add(item["path"])
         # A directory we created may sit where an old file has to come back.
         prune()
-        for item in items:
+        # Newest record first, so the oldest pre-image is written last. Should two records turn out to be
+        # one file under spellings the key missed, its content from before the mission still wins.
+        for item in reversed(items):
             if item["before"] is None:
                 continue
             now = state(workspace, item["path"])

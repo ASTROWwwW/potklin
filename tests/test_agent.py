@@ -330,7 +330,10 @@ class Agent(unittest.TestCase):
         result = self.run_agent(model, allow_write=True, checks=["command:test"])
         self.assertTrue(result["verified"], result)
         stuck = self.run_agent(Garbled("garbled", "garbled", "garbled"))
-        self.assertEqual((stuck["status"], stuck["error"]), ("invalid_action", None))
+        self.assertEqual(stuck["status"], "invalid_action")
+        self.assertIn("XML syntax error", stuck["error"])
+        other = self.run_agent(Script("{bad", "{bad", "{bad"))
+        self.assertEqual((other["status"], other["error"]), ("invalid_action", None))
 
     def test_only_a_parse_failure_counts_as_a_bad_reply(self):
         import io
@@ -339,6 +342,9 @@ class Agent(unittest.TestCase):
         from potklin.ollama import ModelReplyError, Ollama
         for code, body, expected in ((500, b'{"error":"XML syntax error on line 10: unexpected EOF"}', True),
                                      (500, b'{"error":"model requires more system memory"}', False),
+                                     (500, b'{"error":"failed to parse model template"}', False),
+                                     (500, b'{"error":"failed to parse grammar: out of memory"}', False),
+                                     (500, b'{"error":"unable to parse GGUF header"}', False),
                                      (404, b'{"error":"model not found"}', False)):
             failure = urllib.error.HTTPError("u", code, "m", {}, io.BytesIO(body))
             with patch("urllib.request.OpenerDirector.open", side_effect=failure), self.assertRaises(RuntimeError) as raised:
