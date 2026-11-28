@@ -7,8 +7,8 @@ import hashlib
 import json
 import os
 import stat
+import tempfile
 from pathlib import Path
-from .checks import normalize
 from .edits import MAX_FILE, digest, write_atomic
 from .mods import Workspace
 
@@ -30,14 +30,30 @@ def state(workspace, path):
 UNRESTORABLE = {"directory", "unreadable"}
 
 
-def same_file_key(path):
+def ignores_case(folder):
+    """Ask the disk itself: Windows and macOS usually ignore case, but not every volume or directory."""
+    try:
+        with tempfile.NamedTemporaryFile(prefix=".potklin-case-", dir=folder) as probe:
+            return (Path(folder) / Path(probe.name).name.upper()).exists()
+    except OSError:
+        return False
+
+
+def same_file_key(path, folds):
     """Equal for two spellings the disk treats as one file.
 
-    NTFS ignores case within the Basic Multilingual Plane, accents included, but keeps apart the pairs
-    beyond it that Python would fold. A missed alias is survivable: see the restore order in rollback.
+    Such disks ignore case within the Basic Multilingual Plane, accents included; NTFS keeps apart the
+    pairs beyond it that Python would fold. A missed alias is survivable: see the restore order in rollback.
     """
-    value = normalize(path, allow=True)
-    return "".join(os.path.normcase(c) if ord(c) < 0x10000 else c for c in value)
+    if not folds:
+        return path
+    fold = os.path.normcase if os.name == "nt" else lambda c: c.lower() if len(c.lower()) == 1 else c
+    return "".join(fold(c) if ord(c) < 0x10000 else c for c in path)
+
+
+def keyer(folder):
+    folds = ignores_case(folder)
+    return lambda path: same_file_key(path, folds)
 
 
 class Checkpoints:
@@ -108,9 +124,10 @@ class Checkpoints:
             return None, [], set()
         workspace = Workspace(rows[0][0])
         items, new_dirs = {}, set()
+        key = keyer(workspace.root)
         for _, path, before, mode, dirs, after, done in rows:
             # Where the disk ignores case, two spellings are one file: its first record holds the original.
-            item = items.setdefault(same_file_key(path), {"path": path, "paths": set(), "before": before, "mode": mode,
+            item = items.setdefault(key(path), {"path": path, "paths": set(), "before": before, "mode": mode,
                                                              "original": None if before is None else digest(before)})
             item["paths"].add(path)
             item["after"], item["done"] = after, done
@@ -124,14 +141,15 @@ class Checkpoints:
         workspace, items, new_dirs = self._pending(mission)
         if workspace is None:
             raise ValueError("no checkpoint for this mission")
-        created = {same_file_key(i["path"]) for i in items if i["before"] is None}
-        made = {same_file_key(name) for name in new_dirs}
+        key = keyer(workspace.root)
+        created = {key(i["path"]) for i in items if i["before"] is None}
+        made = {key(name) for name in new_dirs}
 
         def ours(item):
             """A directory the mission made, holding nothing but files the mission made."""
-            if item["current"] != "directory" or same_file_key(item["path"]) not in made:
+            if item["current"] != "directory" or key(item["path"]) not in made:
                 return False
-            return all(f.is_dir() or same_file_key(f.relative_to(workspace.root).as_posix()) in created
+            return all(f.is_dir() or key(f.relative_to(workspace.root).as_posix()) in created
                        for f in (workspace.root / item["path"]).rglob("*"))
 
         def prune():

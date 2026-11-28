@@ -8,13 +8,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 from potklin import checks
-from potklin.checkpoint import Checkpoints
+from potklin.checkpoint import Checkpoints, ignores_case, same_file_key
 from potklin.context_policy import pack
 from potklin.core import Executor, Journal
 from potklin.execution import CommandSet, clean_environment
 from potklin.git_actions import LocalGit
 from potklin.mods import Workspace, build_registry
 from potklin.search import search
+
+
+DISK_IGNORES_CASE = ignores_case(tempfile.gettempdir())
 
 
 class Temp(unittest.TestCase):
@@ -210,7 +213,7 @@ class ThirdPass(Temp):
         self.put(name, text)
         store.seal(workspace, seq, name)
 
-    @unittest.skipUnless(os.name == "nt", "case-insensitive disk")
+    @unittest.skipUnless(DISK_IGNORES_CASE, "needs a disk that ignores case")
     def test_our_directory_under_another_case_does_not_block_rollback(self):
         self.put("notes", "original")
         store = Checkpoints(self.journal.db)
@@ -229,13 +232,13 @@ class ThirdPass(Temp):
         self.create(store, upper, "mission 1")
         return store
 
-    @unittest.skipUnless(os.name == "nt", "case-insensitive disk")
+    @unittest.skipUnless(DISK_IGNORES_CASE, "needs a disk that ignores case")
     def test_accented_names_in_two_cases_are_one_file(self):
         store = self.recased_history("\u00e9.cfg", "\u00c9.cfg")
         self.assertEqual(store.rollback("m")["unrestored"], [])
         self.assertEqual([p.read_bytes() for p in self.root.iterdir()], [b"original"])
 
-    @unittest.skipUnless(os.name == "nt", "case-insensitive disk")
+    @unittest.skipUnless(DISK_IGNORES_CASE, "needs a disk that ignores case")
     def test_original_survives_even_if_aliases_are_not_merged(self):
         from potklin import checkpoint
         for force in (False, True):
@@ -244,9 +247,17 @@ class ThirdPass(Temp):
                     file.unlink()
                 self.journal.db.execute("DROP TABLE IF EXISTS checkpoints")
                 store = self.recased_history("a.cfg", "A.cfg")
-                with patch.object(checkpoint, "same_file_key", lambda path: path):
+                with patch.object(checkpoint, "same_file_key", lambda path, folds: path):
                     store.rollback("m", force=force)
                 self.assertEqual([p.read_bytes() for p in self.root.iterdir()], [b"original"])
+
+    def test_names_are_only_folded_on_a_disk_that_ignores_case(self):
+        self.assertNotEqual(same_file_key("A.cfg", False), same_file_key("a.cfg", False))
+        self.assertEqual(same_file_key("dir/É.cfg", True), same_file_key("dir/é.cfg", True))
+        self.assertNotEqual(same_file_key("𐐀", True), same_file_key("𐐨", True))
+        self.put("Probe.txt", "x")
+        self.assertEqual(ignores_case(self.root), (self.root / "PROBE.TXT").exists())
+        self.assertEqual([p.name for p in self.root.iterdir()], ["Probe.txt"])
 
     def test_distinct_non_ascii_names_are_never_merged(self):
         lower, upper = "\U00010428.cfg", "\U00010400.cfg"
