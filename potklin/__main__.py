@@ -45,6 +45,7 @@ def parser():
     mission.add_argument("--mods", nargs="+", choices=ALL_MODS, help="default: filesystem coding")
     mission.add_argument("--steps", type=int, help="default: 20")
     mission.add_argument("--think", action="store_true")
+    mission.add_argument("--review", action="store_true", help="once checks pass, ask the model to recheck every stated requirement")
     mission.add_argument("--allow-write", action="store_true", help="let the agent create, edit, move and remove files")
     mission.add_argument("--allow-delete", action="store_true", help="also let the agent delete files")
     mission.add_argument("--only", action="append", default=[], help="path or glob; when given, nothing else may be written")
@@ -89,7 +90,8 @@ def journal_path(value):
 
 
 def progress(kind, detail):
-    label = {"started": "mission", "step": "tool", "rejected": "rejected reply", "checks_failed": "checks failed"}[kind]
+    label = {"started": "mission", "step": "tool", "rejected": "rejected reply", "checks_failed": "checks failed",
+             "review": "review"}[kind]
     print(f"[{label}] {detail}", file=sys.stderr, flush=True)
 
 
@@ -107,6 +109,7 @@ def mission_scope(a):
     a.steps = a.steps if a.steps is not None else scope.get("steps", 20)
     a.command_timeout = a.command_timeout if a.command_timeout is not None else scope.get("command_timeout", 120)
     a.rollback_on_failure = a.rollback_on_failure or scope.get("rollback_on_failure", False)
+    a.review = a.review or scope.get("review", False)
     return scope.get("commands")
 
 
@@ -126,7 +129,7 @@ def run_mission(a, journal):
     runner = MissionRunner(registry, journal, Ollama(a.model, context=a.context), Workspace(a.workspace), commands, progress, budget)
     mods = set(a.mods) | ({"commands"} if commands else set())
     result = runner.run(a.request, mods, a.steps, a.think, a.allow_write, a.check, a.protect, a.rollback_on_failure,
-                        a.allow_delete, a.only, a.holdout)
+                        a.allow_delete, a.only, a.holdout, a.review)
     show(result)
     if result["verified"]:
         return 0

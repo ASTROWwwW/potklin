@@ -103,7 +103,7 @@ class Agent(unittest.TestCase):
     def test_deleting_needs_its_own_permission(self):
         model = Script(call("files.read", path="calc.py"), call("files.remove", path="calc.py"), DONE)
         result = self.run_agent(model, allow_write=True)
-        self.assertEqual(result["observations"][1]["detail"], "tool not available: files.remove")
+        self.assertTrue(result["observations"][1]["detail"].startswith("tool not available: files.remove. Available tools: "))
         self.assertTrue((self.root / "calc.py").exists())
         model = Script(call("files.read", path="calc.py"), call("files.remove", path="calc.py"), DONE)
         self.run_agent(model, allow_write=True, allow_delete=True)
@@ -266,6 +266,59 @@ class Agent(unittest.TestCase):
         result = self.run_agent(model, allow_write=True, checks=["exists:never"], rollback_on_failure=True)
         self.assertEqual((result["rollback"]["conflicts"], result["rollback"]["restored"]), ([], ["calc.py"]))
         self.assertIn("a - b", self.source())
+
+    def test_unambiguous_tool_names_are_accepted(self):
+        model = Script(call("files_read", path="calc.py"), call("commands", name="test"), DONE)
+        result = self.run_agent(model)
+        self.assertEqual([o.get("tool") for o in result["observations"]], ["files.read", "commands.run"])
+
+    def test_ambiguous_or_forbidden_names_run_nothing(self):
+        for name in ("files", "files_remove", "files.delete", "run"):
+            model = Script(call(name, path="calc.py"), DONE)
+            result = self.run_agent(model, allow_write=True)
+            with self.subTest(name=name):
+                self.assertIn("Available tools: ", result["observations"][0]["detail"])
+                self.assertTrue((self.root / "calc.py").exists())
+
+    def test_native_history_shows_the_resolved_name(self):
+        class Native(Script):
+            def chat(self, messages, tools=None, **kw):
+                self.prompts.append(messages)
+                return {"message": self.replies.pop(0)}
+
+        model = Native({"tool_calls": [{"function": {"name": "commands", "arguments": {"name": "test"}}}]}, {"content": "ok"})
+        self.run_agent(model)
+        self.assertEqual(model.prompts[1][2]["tool_calls"][0]["function"]["name"], "commands.run")
+        self.assertEqual(model.prompts[1][3]["tool_name"], "commands.run")
+
+    def test_repeated_read_shows_the_result_again_only_once(self):
+        read = call("files.read", path="calc.py")
+        result = self.run_agent(Script(read, read, read, read))
+        self.assertEqual(result["status"], "repeated_action")
+        self.assertEqual(["return a - b" in o.get("data", "") for o in result["observations"]], [True, True, False, False])
+
+    def test_repeated_command_is_never_replayed(self):
+        run = call("commands.run", name="test")
+        result = self.run_agent(Script(run, run, DONE))
+        self.assertNotIn("data", result["observations"][1])
+
+    def test_review_asks_once_then_rechecks(self):
+        model = Script(call("files.read", path="calc.py"), self.fix(), DONE, DONE)
+        result = self.run_agent(model, allow_write=True, checks=["command:test"], review=True)
+        self.assertEqual((result["status"], result["verified"]), ("verified", True))
+        self.assertEqual([o.get("error") for o in result["observations"]], [None, None, "review"])
+        self.assertIn("may not cover every requirement", model.prompts[3][-1]["content"])
+
+    def test_review_that_breaks_the_checks_is_not_verified(self):
+        model = Script(call("files.read", path="calc.py"), self.fix(), DONE, self.fix("a + b", "a * b"), DONE, DONE)
+        result = self.run_agent(model, allow_write=True, checks=["command:test"], review=True)
+        self.assertEqual((result["status"], result["verified"]), ("verification_failed", False))
+
+    def test_review_is_off_by_default_and_skipped_without_writes(self):
+        model = Script(call("files.read", path="calc.py"), self.fix(), DONE)
+        self.assertTrue(self.run_agent(model, allow_write=True, checks=["command:test"])["verified"])
+        untouched = self.run_agent(Script(DONE), checks=["exists:calc.py"], review=True)
+        self.assertEqual(untouched["observations"], [])
 
     def test_protected_file_cannot_be_edited(self):
         model = Script(call("files.read", path="tests/check.py"),

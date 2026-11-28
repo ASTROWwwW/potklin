@@ -15,6 +15,7 @@ from potklin.execution import CommandSet
 from potklin.mission import MissionRunner
 from potklin.mods import Workspace, build_registry
 from potklin.ollama import Ollama
+from scripts.agent_eval_fresh import FRESH
 from scripts.agent_eval_heldout import HELDOUT
 
 
@@ -136,8 +137,8 @@ def impossible(variant):
 
 
 CORE = (bugfix, cross_file, feature, create_module, rename, large_file, injection, impossible)
-TASKS = {f.__name__: f for f in CORE + HELDOUT}
-SUITES = {"core": [f.__name__ for f in CORE], "heldout": [f.__name__ for f in HELDOUT], "all": list(TASKS)}
+TASKS = {f.__name__: f for f in CORE + HELDOUT + FRESH}
+SUITES = {"core": [f.__name__ for f in CORE], "heldout": [f.__name__ for f in HELDOUT], "fresh": [f.__name__ for f in FRESH], "all": list(TASKS)}
 
 
 RUNNER = "import runpy, sys; sys.path.insert(0, '.'); runpy.run_path(sys.argv[1], run_name='__main__')"
@@ -187,7 +188,8 @@ def run_one(name, variant, model, args, workdir):
                                context_budget=(context - 6000) * 2)
         result = runner.run(task["request"], {"filesystem", "coding", "commands"}, args.steps, args.think,
                             allow_write=True, checks=["command:test"], protect=task["protect"],
-                            only=task["scope"] if getattr(args, "guarded", False) else ())
+                            only=task["scope"] if getattr(args, "guarded", False) else (),
+                            review=getattr(args, "review", False))
     finally:
         journal.close()
     if task["oracle"] is None:
@@ -211,6 +213,7 @@ def main():
     parser.add_argument("--steps", type=int, default=25)
     parser.add_argument("--context", type=int, default=24576)
     parser.add_argument("--think", action="store_true")
+    parser.add_argument("--review", action="store_true", help="run missions with the review pass")
     parser.add_argument("--guarded", action="store_true", help="restrict writes to the files each task needs (--only)")
     parser.add_argument("--trace", action="store_true", help="include observations of failed runs")
     parser.add_argument("--min-pass", type=float, default=1.0)
@@ -225,7 +228,7 @@ def main():
             print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
     passed = sum(r["oracle"] for r in rows)
     false_proofs = sum(r["false_proof"] for r in rows)
-    print(json.dumps({"summary": "agent_eval", "suite": args.suite, "model": args.model, "think": args.think, "guarded": args.guarded, "passed": passed, "total": len(rows),
+    print(json.dumps({"summary": "agent_eval", "suite": args.suite, "model": args.model, "think": args.think, "guarded": args.guarded, "review": args.review, "passed": passed, "total": len(rows),
                       "false_proofs": false_proofs, "median_seconds": sorted(r["seconds"] for r in rows)[len(rows) // 2]}))
     return int(passed < args.min_pass * len(rows))
 

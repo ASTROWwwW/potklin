@@ -8,7 +8,8 @@ from pathlib import Path
 
 LISTS = ("mods", "only", "protect", "check", "holdout")
 NUMBERS = ("steps", "command_timeout")
-ALLOWED = (*LISTS, *NUMBERS, "commands", "rollback_on_failure")
+FLAGS = ("rollback_on_failure", "review")
+ALLOWED = (*LISTS, *NUMBERS, *FLAGS, "commands")
 
 
 def load(file, workspace):
@@ -28,8 +29,9 @@ def load(file, workspace):
     for key in NUMBERS:
         if key in data and type(data[key]) is not int:
             raise ValueError(f"profile key {key} must be a whole number")
-    if "rollback_on_failure" in data and type(data["rollback_on_failure"]) is not bool:
-        raise ValueError("profile key rollback_on_failure must be true or false")
+    for key in FLAGS:
+        if key in data and type(data[key]) is not bool:
+            raise ValueError(f"profile key {key} must be true or false")
     if "commands" in data and not isinstance(data["commands"], dict):
         raise ValueError("profile key commands must be an object: {name: [program, argument, ...]}")
     return data

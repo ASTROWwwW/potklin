@@ -19,6 +19,12 @@ FILE_WRITES = {"files.create": ("path",), "files.write": ("path",), "files.repla
                "files.move": ("source", "destination")}
 # The runtime supplies this hash from the model's last read, so the model never copies it.
 HASH_SOURCE = {"files.replace": "path", "files.write": "path", "files.remove": "path", "files.move": "source"}
+REVIEW = (
+    "The acceptance checks pass, but they may not cover every requirement. Before you finish, read each file you changed "
+    "and compare it with every requirement stated in the task and in that code's docstrings and comments, including the "
+    "error cases and edge cases that the checks do not exercise. Fix whatever is not met, then report. "
+    "If everything is met, report without changing anything."
+)
 TOOL_ERRORS = (ValueError, PermissionError, OSError, UnicodeError, subprocess.SubprocessError)
 
 CALLS_PER_REPLY = 4
@@ -39,6 +45,14 @@ SYSTEM = (
 
 def short(value, limit=200):
     return value if len(value) <= limit else value[:limit] + "...[" + str(len(value)) + " chars]"
+
+
+def resolve_tool(name, allowed):
+    """Map a slightly wrong tool name to the one allowed tool it can only mean. Grants nothing new."""
+    if name in allowed:
+        return name
+    meant = [t for t in allowed if name == t.replace(".", "_") or name == t.split(".", 1)[0]]
+    return meant[0] if len(meant) == 1 else None
 
 
 def size(message):
@@ -65,7 +79,7 @@ class MissionRunner:
         self.on_event = on_event or (lambda *a: None)
 
     def run(self, request, mods, max_steps=6, think=False, allow_write=False, checks=(), protect=(), rollback_on_failure=False,
-            allow_delete=False, only=(), holdout=()):
+            allow_delete=False, only=(), holdout=(), review=False):
         if not isinstance(max_steps, int) or not 1 <= max_steps <= MAX_STEPS:
             raise ValueError(f"max_steps must be 1..{MAX_STEPS}")
         if not isinstance(request, str) or not request.strip() or len(request) > 8000:
@@ -96,6 +110,7 @@ class MissionRunner:
             allowed["commands.run"] = replace(allowed["commands.run"], description=COMMAND_DESCRIPTION + ", ".join(visible))
         run = _Run(self, uuid.uuid4().hex, request, set(mods), allowed, checks, tuple(protect), guarded, tuple(only))
         run.holdout, run.visible_commands = holdout, visible
+        run.review_pending = review
         return run.execute(max_steps, think, rollback_on_failure)
 
 
@@ -120,6 +135,8 @@ class _Run:
         self.failed_finish = None
         self.passing = []
         self.reply_error = None
+        self.replayed = set()
+        self.review_pending = False
 
     def execute(self, max_steps, think, rollback_on_failure):
         try:
@@ -248,6 +265,7 @@ class _Run:
                     arguments = json.loads(arguments)
                 except json.JSONDecodeError:
                     pass
+            name = resolve_tool(name, self.allowed) or name
             shown = {k: short(v, HISTORY_ARGUMENT_LIMIT) if isinstance(v, str) else v
                      for k, v in arguments.items()} if isinstance(arguments, dict) else {}
             kept.append({"function": {"name": name, "arguments": shown}})
@@ -257,9 +275,12 @@ class _Run:
         return None
 
     def act(self, assistant, role, name, arguments):
+        resolved = resolve_tool(name, self.allowed)
+        name = resolved or name
         tool_name = name if role == "tool" else None
-        if name not in self.allowed:
-            return self.strike(assistant, "invalid_action", "tool not available: " + short(name, 60), role, tool_name)
+        if resolved is None:
+            return self.strike(assistant, "invalid_action", "tool not available: " + short(name, 60)
+                               + ". Available tools: " + ", ".join(self.allowed), role, tool_name)
         if not isinstance(arguments, dict):
             return self.strike(assistant, "invalid_action", "arguments must be an object of named values", role, tool_name)
         args = {k: str(v) if type(v) is int else v for k, v in arguments.items()}
@@ -268,8 +289,14 @@ class _Run:
         generation = self.writes if name == "commands.run" else self.version
         key = (generation, json.dumps([name, args], sort_keys=True))
         if key in self.seen:
+            again = None
+            if not self.allowed[name].side_effect and key not in self.replayed:
+                self.replayed.add(key)
+                again = self.observations[self.seen[key]].get("data")
             return self.strike(assistant, "repeated_action", "you already did exactly this and nothing changed since; "
-                               "its result is above. Take the next step", role, tool_name)
+                               + ("here is that result again. " if again else "its result is above. ")
+                               + "Do not repeat the call: change a file, run a command or write your report",
+                               role, tool_name, again)
         self.seen[key] = len(self.observations)
         self.strikes = 0
         self.call(name, args)
@@ -278,9 +305,12 @@ class _Run:
         self.record(assistant, role, tool_name)
         return None
 
-    def strike(self, assistant, status, message, role="user", tool=None):
+    def strike(self, assistant, status, message, role="user", tool=None, data=None):
         self.strikes += 1
-        self.observations.append({"error": status, "detail": message})
+        observation = {"error": status, "detail": message}
+        if data:
+            observation["data"] = data
+        self.observations.append(observation)
         self.record(assistant, role, tool)
         self.runner.journal.append(self.mission, "rejected", {"reason": status})
         self.runner.on_event("rejected", message)
@@ -292,6 +322,13 @@ class _Run:
         results = self.evaluate()
         failed = [r for r in results if not r["passed"]]
         if not failed:
+            if self.review_pending and self.writes:
+                self.review_pending = False
+                self.strikes = 0
+                self.observations.append({"error": "review", "detail": REVIEW})
+                self.record(assistant)
+                self.runner.on_event("review", "checks pass; asking for one review of the requirements")
+                return None, answer
             self.passing = results
             return "checks_passed", answer
         if self.failed_finish == self.version:
