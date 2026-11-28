@@ -45,7 +45,8 @@ def parser():
     mission.add_argument("--mods", nargs="+", choices=ALL_MODS, help="default: filesystem coding")
     mission.add_argument("--steps", type=int, help="default: 20")
     mission.add_argument("--think", action="store_true")
-    mission.add_argument("--review", action="store_true", help="once checks pass, ask the model to recheck every stated requirement")
+    mission.add_argument("--review", action=argparse.BooleanOptionalAction,
+                        help="once checks pass, ask the model to recheck every stated requirement (default: on)")
     mission.add_argument("--allow-write", action="store_true", help="let the agent create, edit, move and remove files")
     mission.add_argument("--allow-delete", action="store_true", help="also let the agent delete files")
     mission.add_argument("--only", action="append", default=[], help="path or glob; when given, nothing else may be written")
@@ -109,7 +110,7 @@ def mission_scope(a):
     a.steps = a.steps if a.steps is not None else scope.get("steps", 20)
     a.command_timeout = a.command_timeout if a.command_timeout is not None else scope.get("command_timeout", 120)
     a.rollback_on_failure = a.rollback_on_failure or scope.get("rollback_on_failure", False)
-    a.review = a.review or scope.get("review", False)
+    a.review = a.review if a.review is not None else scope.get("review", True)
     return scope.get("commands")
 
 

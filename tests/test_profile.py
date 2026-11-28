@@ -16,7 +16,7 @@ class Model:
         self.replies = [{"name": "files.read", "args": {"path": "calc.py"}},
                         {"name": "files.create", "args": {"path": "extra.txt", "text": "x"}},
                         {"name": "files.replace", "args": {"path": "calc.py", "old": "a - b", "new": "a + b"}},
-                        {"finish": "done"}]
+                        {"finish": "done"}, {"finish": "done"}]
 
     def chat(self, messages, **kwargs):
         return {"message": {"content": json.dumps(self.replies.pop(0))}}
@@ -55,6 +55,19 @@ class Profiles(unittest.TestCase):
         result = json.loads(out)
         self.assertEqual((code, result["status"], result["changes"]), (0, "verified", ["calc.py"]), err)
         self.assertFalse((self.workspace / "extra.txt").exists())
+
+    def reviewed(self, scope, *flags):
+        code, out, err = self.cli("--profile", self.write(scope), "--allow-write", "--allow-exec", *flags)
+        result = json.loads(out)
+        self.assertEqual((code, result["status"]), (0, "verified"), err)
+        return "review" in [o.get("error") for o in result["observations"]]
+
+    def test_review_is_on_by_default_and_can_be_turned_off(self):
+        for expected, scope, flags in ((True, {}, ()), (False, {}, ("--no-review",)), (False, {"review": False}, ()),
+                                       (True, {"review": False}, ("--review",)), (False, {"review": True}, ("--no-review",))):
+            with self.subTest(scope=scope, flags=flags):
+                (self.workspace / "calc.py").write_bytes(b"def add(a, b):\n    return a - b\n")
+                self.assertEqual(self.reviewed(self.scope(**scope), *flags), expected)
 
     def test_command_line_lists_add_to_the_profile(self):
         code, out, _ = self.cli("--profile", self.write(self.scope()), "--allow-write", "--allow-exec",

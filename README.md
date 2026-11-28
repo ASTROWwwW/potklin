@@ -24,8 +24,11 @@ potklin --workspace path/to/project mission "Fix the failing test" \
   --commands ~/commands.json --allow-exec --check command:test --rollback-on-failure
 ```
 
-**Read [Using the agent](docs/agent.md) before you grant write or exec permissions.** Commands are not sandboxed, and
-text inside your files can steer the model.
+A [profile](docs/agent.md#profiles) kept outside the project shortens that command.
+
+**Read [Using the agent](docs/agent.md) before you grant write or exec permissions.** Commands are not sandboxed, text
+inside your files can steer the model, and a passing check is not proof of a correct change: see the
+[measured results](docs/agent-eval.md). On the harder task sets, the 35B model did clearly better than the 9B.
 
 ## What you get
 

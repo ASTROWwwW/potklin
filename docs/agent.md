@@ -44,6 +44,8 @@ potklin --workspace path/to/project mission "Fix the failing test" \
 | `--holdout SPEC` | criterion the model never sees, run once at the end; needs at least one `--check` (repeatable) |
 | `--rollback-on-failure` | undo the file writes on any outcome other than `verified`, `checks_passed_non_discriminating` or `model_finished_unverified`, including Ctrl+C |
 | `--steps N` | model replies allowed, 1 to 50, default 20 |
+| `--no-review` | skip the review pass. By default, once the checks pass after a write, the model is asked one time to recheck every stated requirement; missions take about twice as long. See the measured effect in [agent-eval.md](agent-eval.md) |
+| `--profile FILE` | read the mission scope from a file kept outside the workspace |
 | `--think` | let the model reason before each reply; slower |
 
 A holdout is the defence against a model that satisfies the visible test without solving the problem. Keep its
@@ -56,6 +58,30 @@ model and cannot be started by it:
 
 Check kinds: `exists:path`, `absent:path`, `contains:path::text`, `sha256:path::hex`, `command:name`.
 The model sees the kind and target of each check, never the expected text or hash. It does see the output of a failing command.
+
+## Profiles
+
+A profile keeps a project's scope in one file so the command stays short. Store it outside the workspace; a profile
+inside the workspace is refused, so a project you cloned cannot ship one.
+
+```json
+{
+  "only": ["src"],
+  "protect": ["tests"],
+  "commands": { "test": ["python", "-m", "unittest", "discover", "-s", "tests"] },
+  "check": ["command:test"],
+  "rollback_on_failure": true
+}
+```
+
+```sh
+potklin --workspace path/to/project mission "Fix the failing test" --profile ~/profiles/project.json --allow-write --allow-exec
+```
+
+Allowed keys: `mods`, `only`, `protect`, `check`, `holdout`, `commands`, `steps`, `command_timeout`,
+`rollback_on_failure`, `review`. A profile cannot grant a permission: `--allow-write`, `--allow-delete` and
+`--allow-exec` exist only on the command line. Lists given on the command line are added to the profile's; a single value
+on the command line wins. Declare commands either in the profile or with `--commands`, not both.
 
 ## Reading the result
 
@@ -103,6 +129,7 @@ Enforced by the runtime, whatever the model replies:
 - `git` is never searched for in the current directory or the workspace;
 - `.git`, `.env`, `.env.*` (except `.env.example`), `.vscode`, `.idea` and `.potklin` cannot be read or written, including
   through Windows aliases such as `.git.` or `GIT~1`;
+- a tool name that can only mean one permitted tool, such as `commands` for `commands.run`, is accepted; this grants nothing;
 - no shell and no model-written command line; a program name that resolves inside the workspace is refused;
 - commands do not inherit environment variables whose name suggests a secret;
 - a file can only be changed after it was read, and only if it has not changed since;
