@@ -12,7 +12,7 @@ import sqlite3
 import subprocess
 from dataclasses import asdict
 from pathlib import Path
-from . import __version__
+from . import __version__, profile
 from .checkpoint import Checkpoints
 from .core import Executor, Journal
 from .execution import CommandSet
@@ -23,6 +23,7 @@ from .ollama import Ollama
 from .router import route
 
 DEFAULT_MODEL = "huihui_ai/Qwen3.6-abliterated:35b-a3b"
+DEFAULT_MODS = ["filesystem", "coding"]
 ALL_MODS = ["filesystem", "cyber", "windows", "coding", "documents"]
 
 
@@ -40,15 +41,16 @@ def parser():
     sub.add_parser("doctor", help="check that the local model is ready")
     mission = sub.add_parser("mission", help="run a bounded agent task")
     mission.add_argument("request")
-    mission.add_argument("--mods", nargs="+", choices=ALL_MODS, default=["filesystem", "coding"])
-    mission.add_argument("--steps", type=int, default=20)
+    mission.add_argument("--profile", help="JSON scope kept outside the workspace: only, protect, check, holdout, commands...")
+    mission.add_argument("--mods", nargs="+", choices=ALL_MODS, help="default: filesystem coding")
+    mission.add_argument("--steps", type=int, help="default: 20")
     mission.add_argument("--think", action="store_true")
     mission.add_argument("--allow-write", action="store_true", help="let the agent create, edit, move and remove files")
     mission.add_argument("--allow-delete", action="store_true", help="also let the agent delete files")
     mission.add_argument("--only", action="append", default=[], help="path or glob; when given, nothing else may be written")
     mission.add_argument("--commands", help="JSON file: {name: [program, argument, ...]}")
     mission.add_argument("--allow-exec", action="store_true", help="let declared commands run; they execute workspace code without a sandbox")
-    mission.add_argument("--command-timeout", type=int, default=120)
+    mission.add_argument("--command-timeout", type=int, help="default: 120 seconds")
     mission.add_argument("--check", action="append", default=[], help="exists:p, absent:p, contains:p::text, sha256:p::hex or command:name")
     mission.add_argument("--holdout", action="append", default=[], help="check the model never sees, run once at the end")
     mission.add_argument("--protect", action="append", default=[], help="path or glob the mission must not change")
@@ -91,10 +93,31 @@ def progress(kind, detail):
     print(f"[{label}] {detail}", file=sys.stderr, flush=True)
 
 
+def mission_scope(a):
+    """Merge the profile into the arguments: lists add up, a single value on the command line wins."""
+    scope = profile.load(a.profile, a.workspace) if a.profile else {}
+    if a.commands and "commands" in scope:
+        raise ValueError("commands are declared both in --commands and in the profile; keep one")
+    for key in ("only", "protect", "check", "holdout"):
+        setattr(a, key, scope.get(key, []) + getattr(a, key))
+    a.mods = a.mods or scope.get("mods") or DEFAULT_MODS
+    unknown = sorted(set(a.mods) - set(ALL_MODS))
+    if unknown:
+        raise ValueError("unknown mods: " + ", ".join(unknown))
+    a.steps = a.steps if a.steps is not None else scope.get("steps", 20)
+    a.command_timeout = a.command_timeout if a.command_timeout is not None else scope.get("command_timeout", 120)
+    a.rollback_on_failure = a.rollback_on_failure or scope.get("rollback_on_failure", False)
+    return scope.get("commands")
+
+
 def run_mission(a, journal):
-    if a.commands and not a.allow_exec:
-        raise PermissionError("--commands requires --allow-exec: commands run workspace code without a sandbox")
-    commands = CommandSet.load(a.commands, a.workspace, a.command_timeout) if a.commands else None
+    declared = mission_scope(a)
+    if (a.commands or declared is not None) and not a.allow_exec:
+        raise PermissionError("declared commands require --allow-exec: they run workspace code without a sandbox")
+    if declared is not None:
+        commands = CommandSet(a.workspace, declared, a.command_timeout)
+    else:
+        commands = CommandSet.load(a.commands, a.workspace, a.command_timeout) if a.commands else None
     registry = build_registry(a.workspace, commands)
     if not 8192 <= a.context <= 262144:
         raise ValueError("--context must be within 8192..262144")

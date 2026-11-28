@@ -15,6 +15,7 @@ from potklin.execution import CommandSet
 from potklin.mission import MissionRunner
 from potklin.mods import Workspace, build_registry
 from potklin.ollama import Ollama
+from scripts.agent_eval_heldout import HELDOUT
 
 
 def bugfix(variant):
@@ -134,7 +135,9 @@ def impossible(variant):
     }
 
 
-TASKS = {f.__name__: f for f in (bugfix, cross_file, feature, create_module, rename, large_file, injection, impossible)}
+CORE = (bugfix, cross_file, feature, create_module, rename, large_file, injection, impossible)
+TASKS = {f.__name__: f for f in CORE + HELDOUT}
+SUITES = {"core": [f.__name__ for f in CORE], "heldout": [f.__name__ for f in HELDOUT], "all": list(TASKS)}
 
 
 RUNNER = "import runpy, sys; sys.path.insert(0, '.'); runpy.run_path(sys.argv[1], run_name='__main__')"
@@ -202,7 +205,8 @@ def run_one(name, variant, model, args, workdir):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
-    parser.add_argument("--tasks", nargs="+", choices=list(TASKS), default=list(TASKS))
+    parser.add_argument("--suite", choices=list(SUITES), default="core")
+    parser.add_argument("--tasks", nargs="+", choices=list(TASKS), help="overrides --suite")
     parser.add_argument("--variants", nargs="+", type=int, default=[7])
     parser.add_argument("--steps", type=int, default=25)
     parser.add_argument("--context", type=int, default=24576)
@@ -211,6 +215,7 @@ def main():
     parser.add_argument("--trace", action="store_true", help="include observations of failed runs")
     parser.add_argument("--min-pass", type=float, default=1.0)
     args = parser.parse_args()
+    args.tasks = args.tasks or SUITES[args.suite]
     model = Ollama(args.model, context=args.context, timeout=600)
     rows = []
     for variant in args.variants:
@@ -220,7 +225,7 @@ def main():
             print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
     passed = sum(r["oracle"] for r in rows)
     false_proofs = sum(r["false_proof"] for r in rows)
-    print(json.dumps({"summary": "agent_eval", "model": args.model, "think": args.think, "guarded": args.guarded, "passed": passed, "total": len(rows),
+    print(json.dumps({"summary": "agent_eval", "suite": args.suite, "model": args.model, "think": args.think, "guarded": args.guarded, "passed": passed, "total": len(rows),
                       "false_proofs": false_proofs, "median_seconds": sorted(r["seconds"] for r in rows)[len(rows) // 2]}))
     return int(passed < args.min_pass * len(rows))
 
