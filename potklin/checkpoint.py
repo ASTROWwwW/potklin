@@ -56,6 +56,21 @@ def keyer(folder):
     return lambda path: same_file_key(path, folds)
 
 
+def restore_spelling(folder, wanted):
+    """Give a file back its original case after a case-only rename.
+
+    The directory listing is read because resolving a path does not report the stored case on every system.
+    """
+    names = os.listdir(folder)
+    if wanted in names:
+        return False
+    for name in names:
+        if name.casefold() == wanted.casefold() and os.path.samefile(folder / name, folder / wanted):
+            (folder / name).rename(folder / wanted)
+            return True
+    return False
+
+
 class Checkpoints:
     def __init__(self, db):
         self.db = db
@@ -200,10 +215,7 @@ class Checkpoints:
                     if item["mode"] is not None:
                         os.chmod(target, item["mode"])
                     restored.add(item["path"])
-                # Give back the original spelling after a case-only rename.
-                actual, wanted = workspace.path(item["path"]), Path(item["path"]).name
-                if actual.name != wanted:
-                    actual.rename(actual.with_name(wanted))
+                if restore_spelling(workspace.path(item["path"]).parent, Path(item["path"]).name):
                     restored.add(item["path"])
             except OSError:
                 unrestored.add(item["path"])
